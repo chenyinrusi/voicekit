@@ -118,7 +118,7 @@ def run(
         if bound:
             problems = problems + [bound]
     else:
-        problems = ej.verify_set(set_obj, corpus, pack=None)
+        problems = ej.verify_set(set_obj, corpus, pack=None, baseline=Path(pack["baseline"]))
     if problems:
         return fail("样例集不可用：" + "；".join(str(p) for p in problems[:5]))
 

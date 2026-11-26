@@ -123,15 +123,17 @@ def prompt_sha256() -> str:
     return _sha256(SYSTEM_PROMPT + "\x00" + _JSON_INSTRUCTION)
 
 
-def exemplar_names(corpus: Path = DEFAULT_CORPUS) -> list[str]:
+def exemplar_names(corpus: Path = DEFAULT_CORPUS, baseline: Path | None = None) -> list[str]:
     """样例 = 裁判基线样本（12 篇）里按文件名排序的前 10 篇，和 pilot 完全一致。
 
     这条推导是确定的：换一份「另外 10 篇 + 重算 sha」的样例集，名单对不上就拒。
+    `baseline` 给了就读那个文件：装成 wheel 时没有 `voices/` 目录，只能读包里的基线。
     """
-    baseline = jl.load_baseline()
-    if baseline is None:
+    found = jl.load_baseline(baseline) if baseline is not None else jl.load_baseline()
+    if found is None:
         raise jl.JudgeError("no judge baseline; cannot pick exemplars")
-    sample = {str(name) for name in baseline.get("sample", {}).get("docs", [])}
+    sample = {str(name) for name in found.get("sample", {}).get("docs", [])}
+
     accepted = {doc["file"] for doc in bp.load_corpus(corpus)[0]}
     names = [name for name in sorted(accepted) if name in sample]
     if len(names) < EXEMPLAR_COUNT:
@@ -337,12 +339,17 @@ def _verify_generic(set_obj: dict, corpus: Path, pack: dict | None = None) -> li
 
 
 def verify_set(
-    set_obj: dict, corpus: Path = DEFAULT_CORPUS, *, pack: dict | None = None
+    set_obj: dict,
+    corpus: Path = DEFAULT_CORPUS,
+    *,
+    pack: dict | None = None,
+    baseline: Path | None = None,
 ) -> list[str]:
     """样例集是不是当初验收的那一份：名单、篇数、文件、清洗后字节、总指纹、留出集。
 
     分支由调用方传入的 `pack` 决定（N-04）：带包的是通用集（unmeasured 或 measured），
-    不带包的是 panchen 钉死集。
+    不带包的是 panchen 钉死集。钉死集要靠 `baseline`（包里的 judge_baseline.json）推名单；
+    不给就去开发者树里找，装成 wheel 时那里没有东西，必然失败。
     """
     generic = pack is not None or "pack" in set_obj
     if generic:
@@ -368,7 +375,7 @@ def verify_set(
     if len(set(names)) != len(names):
         problems.append("duplicate exemplar names")
     try:
-        if names != exemplar_names(corpus):
+        if names != exemplar_names(corpus, baseline):
             problems.append("exemplar list does not match the pinned 10 docs")
     except jl.JudgeError as exc:
         problems.append(f"cannot derive pinned exemplars: {exc}")

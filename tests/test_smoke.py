@@ -229,6 +229,97 @@ def write_draft(tmp_path: Path) -> Path:
     return draft
 
 
+def write_pinned_pack(dir_path: Path) -> Path:
+    """钉死包（像 CAS 的 panchen-voice）：样例集没有 pack/calibration 键，名单靠包里的 judge_baseline.json 推。"""
+    from voicekit.core import judge_lib as jl
+    from voicekit.core import voice_lib as lib
+    from voicekit.core.exemplar_inputs import clean_body
+    from voicekit.core.exemplar_measured import set_sha256, sha256
+
+    dir_path.mkdir(parents=True, exist_ok=True)
+    corpus = dir_path / "corpus"
+    corpus.mkdir()
+    names = []
+    for i in range(1, 13):
+        name = f"{i:03d}__doc.md"
+        text = f"第{i}篇。他写风、写雨、写巷口的灯，还有夜里不太响的脚步声。" * 14
+        (corpus / name).write_text(text, encoding="utf-8")
+        names.append(name)
+    pack_dir = write_pack(dir_path, corpus={"path": "corpus"})
+    # 基线：profile 指纹 + 12 篇样本（exemplar_names 从 sample 里取前 10）
+    baseline = {
+        "schema": 1,
+        "profile_sha256": jl.profile_sha256(pack_dir / "profile.json"),
+        "sample": {"docs": list(names)},
+    }
+    (dir_path / "judge_baseline.json").write_text(
+        json.dumps(baseline), encoding="utf-8"
+    )
+    docs = []
+    for name in names[:10]:
+        body = clean_body((corpus / name).read_text(encoding="utf-8"))
+        docs.append({"name": name, "sha256": sha256(body), "cjk": lib.cjk_count(body)})
+    exemplar = {
+        "schema": 1,
+        "protocol": "exemplar-same-author",
+        "model": "deepseek-chat",
+        "prompt_version": "exemplar-v2",
+        "judge_logic_version": 1,
+        "exemplar_count": 10,
+        "holdout_count": 0,
+        "docs": docs,
+        "holdout": [],
+        "set_sha256": set_sha256(docs),
+        "measured": {},
+    }
+    (dir_path / "exemplar_baseline.json").write_text(
+        json.dumps(exemplar, ensure_ascii=False), encoding="utf-8"
+    )
+    return pack_dir
+
+
+def test_verify_pinned_set_reads_pack_baseline(tmp_path: Path, monkeypatch):
+    """钉死集的名单只能从包里的基线推；开发者树里的默认基线在 wheel 里不存在。"""
+    from voicekit.core import exemplar_judge as ej
+    from voicekit.core import judge_lib as jl
+
+    monkeypatch.setattr(ej, "HOLDOUT_COUNT", 0)
+    monkeypatch.setattr(ej, "HOLDOUT_NAMES", ())
+    pack_dir = write_pinned_pack(tmp_path / "pack")
+    set_obj = json.loads((pack_dir / "exemplar_baseline.json").read_text(encoding="utf-8"))
+    corpus = pack_dir / "corpus"
+    baseline = pack_dir / "judge_baseline.json"
+
+    real_load = jl.load_baseline
+    monkeypatch.setattr(
+        jl, "load_baseline", lambda path=None: None if path is None else real_load(path)
+    )
+    assert any(
+        "no judge baseline" in p for p in ej.verify_set(set_obj, corpus)
+    ), "没有包基线时必须报缺基线"
+    assert ej.verify_set(set_obj, corpus, baseline=baseline) == []
+
+
+def test_judge_pinned_pack_works_without_dev_tree(tmp_path: Path, monkeypatch):
+    """装成 wheel 时没有 voices/：钉死包要能靠自带的 judge_baseline.json 跑 dry-run。"""
+    from voicekit.core import exemplar_judge as ej
+    from voicekit.core import judge_lib as jl
+    from voicekit.core import release_gate
+
+    real_load = jl.load_baseline
+    monkeypatch.setattr(
+        jl, "load_baseline", lambda path=None: None if path is None else real_load(path)
+    )
+    monkeypatch.setattr(ej, "HOLDOUT_COUNT", 0)
+    monkeypatch.setattr(ej, "HOLDOUT_NAMES", ())
+    pack = write_pinned_pack(tmp_path / "pack")
+    draft = write_draft(tmp_path)
+    lines: list[str] = []
+    rc = release_gate.run(draft, pack, dry_run=True, echo=lines.append)
+    assert rc == 0, "\n".join(lines)
+    assert any("字符" in line for line in lines)
+
+
 def test_judge_dry_run_costs_nothing(tmp_path: Path, monkeypatch):
     """--dry-run：rc 0、只打提示词规模、不建 client（没 API key 也能过）。"""
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
