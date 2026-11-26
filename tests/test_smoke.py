@@ -270,7 +270,14 @@ def write_pinned_pack(dir_path: Path) -> Path:
         "docs": docs,
         "holdout": [],
         "set_sha256": set_sha256(docs),
-        "measured": {},
+        "measured": {
+            "model": "deepseek-chat",
+            "runs": 1,
+            "author_pool": {"n": 0},
+            "author_holdout": {"n": 12},
+            "other_author": {"n": 46},
+            "generic_ai": {"n": 2},
+        },
     }
     (dir_path / "exemplar_baseline.json").write_text(
         json.dumps(exemplar, ensure_ascii=False), encoding="utf-8"
@@ -318,6 +325,45 @@ def test_judge_pinned_pack_works_without_dev_tree(tmp_path: Path, monkeypatch):
     rc = release_gate.run(draft, pack, dry_run=True, echo=lines.append)
     assert rc == 0, "\n".join(lines)
     assert any("字符" in line for line in lines)
+
+
+def test_expected_sizes_uses_pack_baseline(tmp_path: Path, monkeypatch):
+    """评测样本量也从包里的基线算。读不到默认基线时算错 → 真跑 rc=2（wheel 现场报错）。"""
+    from voicekit.core import exemplar_judge as ej
+    from voicekit.core import judge_lib as jl
+
+    real_load = jl.load_baseline
+    monkeypatch.setattr(
+        jl, "load_baseline", lambda path=None: None if path is None else real_load(path)
+    )
+    pack_dir = write_pinned_pack(tmp_path / "pack")
+    corpus = pack_dir / "corpus"
+    baseline = pack_dir / "judge_baseline.json"
+    assert ej.expected_sizes(corpus, baseline)["author_pool"] == 0
+    assert ej.expected_sizes(corpus)["author_pool"] == 12
+
+
+def test_judge_pinned_real_run_without_dev_tree(tmp_path: Path, monkeypatch):
+    """钉死包真跑（假 LLM）：缺开发树时也不能被「measured n != 0」挡死。"""
+    from voicekit.core import exemplar_judge as ej
+    from voicekit.core import judge_lib as jl
+    from voicekit.core import release_gate
+
+    real_load = jl.load_baseline
+    monkeypatch.setattr(
+        jl, "load_baseline", lambda path=None: None if path is None else real_load(path)
+    )
+    monkeypatch.setattr(ej, "HOLDOUT_COUNT", 0)
+    monkeypatch.setattr(ej, "HOLDOUT_NAMES", ())
+    monkeypatch.setenv("DSH_VOICE_JUDGE_CACHE", str(tmp_path / "cache"))
+    pack = write_pinned_pack(tmp_path / "pack")
+    draft = write_draft(tmp_path)
+    fake = _FakeJudgeLLM('{"verdict": "same", "reason": "笔性像"}')
+    lines: list[str] = []
+    rc = release_gate.run(
+        draft, pack, llm_factory=lambda provider, model: fake, echo=lines.append
+    )
+    assert rc == 0, "\n".join(lines)
 
 
 def test_judge_dry_run_costs_nothing(tmp_path: Path, monkeypatch):
@@ -429,6 +475,42 @@ def test_judge_distinct_verdict_is_rc1(tmp_path: Path, monkeypatch):
     assert rc == 1, out
     assert "not-same" in out
     assert "unsure" in out
+
+
+def test_judge_bad_inputs_are_rc2_not_rc1(tmp_path: Path):
+    """环境/文件坏了都是 rc=2；rc=1 只能表示「不像」（脚本靠这个分叉）。"""
+    draft = write_draft(tmp_path)
+    cases = []
+
+    # 1) --pack 指到不是包的目录
+    (tmp_path / "nope").mkdir()
+    cases.append(("--pack", str(tmp_path / "nope")))
+
+    # 2) exemplar_baseline.json 坏 JSON
+    pack = write_exemplar_pack(tmp_path / "pack_a")
+    (pack / "exemplar_baseline.json").write_text("{oops", encoding="utf-8")
+    cases.append(("--pack", str(pack)))
+
+    # 3) judge_baseline.json 坏 JSON
+    pack = write_exemplar_pack(tmp_path / "pack_b")
+    (pack / "judge_baseline.json").write_text("{oops", encoding="utf-8")
+    cases.append(("--pack", str(pack)))
+
+    for flag, value in cases:
+        done = run_cli("judge", str(draft), flag, value, "--dry-run", cwd=tmp_path)
+        out = done.stdout + done.stderr
+        assert done.returncode == 2, (flag, value, done.returncode, out)
+        assert "[FAIL]" in out, out
+
+
+def test_judge_broken_baseline_json_names_the_file(tmp_path: Path):
+    pack = write_exemplar_pack(tmp_path / "pack")
+    (pack / "judge_baseline.json").write_text("[1, 2]", encoding="utf-8")
+    draft = write_draft(tmp_path)
+    done = run_cli("judge", str(draft), "--pack", str(pack), "--dry-run", cwd=tmp_path)
+    out = done.stdout + done.stderr
+    assert done.returncode == 2, out
+    assert "judge_baseline.json" in out
 
 
 @pytest.mark.skipif(not os.environ.get("VOICEKIT_TEST_PACK"), reason="no VOICEKIT_TEST_PACK")

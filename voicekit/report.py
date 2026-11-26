@@ -13,6 +13,7 @@ import re
 from pathlib import Path
 
 from .core import style_lint
+from .core.quick import share_non_prose
 
 CSS = """
 :root{--ink:#1c1a17;--dim:#6b6459;--line:#dfd8cc;--bg:#fbf9f4;--card:#fffdf8;--acc:#8a5a2b;--bad:#a4342a;--ok:#2f6b46}
@@ -47,6 +48,7 @@ button{font:inherit;font-size:.9rem;padding:.5rem 1rem;border:1px solid var(--ac
 .fix3 .it{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--bad);border-radius:10px;padding:.8rem 1rem}
 .fix3 .t{font-weight:600}
 .fix3 .d{margin-top:.35rem;color:var(--dim);font-size:.9rem}
+.ev{margin-top:.35rem;font-size:.88rem;color:var(--acc);word-break:break-word}
 .dgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:.5rem}
 .warn{margin:0 0 1.4rem;padding:.9rem 1rem;background:#fdf0ee;border:1px solid #e6bdb6;border-left:4px solid var(--bad);border-radius:10px;color:#7d2a22;font-size:.92rem}
 @media print{body{background:#fff}.bar{display:none}details{break-inside:avoid}}
@@ -74,22 +76,12 @@ def humanize(detail: str) -> str:
 
 def record_share(text: str) -> float:
     """这份文件里有多少行不是正文（标题/表格/引用/列表/加粗小标题）。"""
-    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-    if not lines:
-        return 0.0
-    off = sum(
-        1
-        for ln in lines
-        if ln.startswith(("#", "|", ">", "-", "*", "1.", "2.", "3."))
-        or (ln.startswith("**") and ln.endswith("**"))
-        or han_len(ln) < 8
-    )
-    return off / len(lines)
+    return share_non_prose(text)
 
 
 def run_lint(draft: Path, pack: Path | None = None) -> dict:
     buf = io.StringIO()
-    argv = ["--file", str(draft), "--json"]
+    argv = ["--file", str(draft), "--json", "--annotate"]
     if pack is not None:
         argv += ["--pack", str(pack)]
     with contextlib.redirect_stdout(buf):
@@ -134,16 +126,22 @@ def build(draft: Path, data: dict, title: str) -> str:
             tile("最大偏差", f"{float(top3[0]['deviation']):.1f}" if top3 else "—", "bad" if top3 else ""),
         ]
     )
+    def ev_line(r: dict) -> str:
+        note = r.get("evidence_note") or ""
+        return f'<div class="ev">句级证据：{e(note)}</div>' if note else ""
+
     fix3_html = "".join(
         f'<div class="it"><div class="t">{i}. {e(r["attribute_name"])}'
         f'<span class="d"> 偏差 {float(r.get("deviation") or 0):.1f}</span></div>'
-        f'<div class="d"><code>{e(humanize(r.get("detail") or ""))}</code></div></div>'
+        f'<div class="d"><code>{e(humanize(r.get("detail") or ""))}</code></div>'
+        f"{ev_line(r)}</div>"
         for i, r in enumerate(top3, 1)
     )
     detail_html = "".join(
         f"<details><summary>{e(r['attribute_id'])} · {e(r['attribute_name'])}"
         f"（偏差 {float(r.get('deviation') or 0):.1f}）</summary>"
         f"<p>{e(humanize(r.get('detail') or ''))}</p>"
+        f"{ev_line(r)}"
         f"<p><code>原文口径：{e(r.get('detail') or '')}</code></p></details>"
         for r in rest
     )
@@ -153,7 +151,9 @@ def build(draft: Path, data: dict, title: str) -> str:
         for r in rows
     )
     copy_text = "改稿清单（来自 voicekit lint）：\n" + "\n".join(
-        f"- {r['attribute_id']} {r['attribute_name']}：{humanize(r.get('detail') or '')}" for r in fails
+        f"- {r['attribute_id']} {r['attribute_name']}：{humanize(r.get('detail') or '')}"
+        + (f"（{r['evidence_note']}）" if r.get("evidence_note") else "")
+        for r in fails
     )
     share = record_share(body)
     guard_html = (

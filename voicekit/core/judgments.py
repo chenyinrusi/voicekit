@@ -28,16 +28,25 @@ from collections import Counter
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = SCRIPT_DIR.parents[1]
 sys.path.insert(0, str(SCRIPT_DIR))
 
-from .voice_text import CORPUS  # noqa: E402
+from .voice_text import corpus_path  # noqa: E402
 
-OUT = REPO_ROOT / "voices/panchen-voice/judgments.jsonl"
+#: 判断库跟着包走：`voices/panchen-voice/judgments.jsonl` 这种位置只在开发树成立，
+#: 装成 wheel 后包由 `--pack` 给，所以改成懒路径。
+def out_path() -> Path:
+    from ..paths import active_pack
+
+    return active_pack() / "judgments.jsonl"
+
+
+#: 开发期重建判断库时额外收的两篇手稿，**只给 `--write` 用**，运行时路径不碰它们。
 #: 语料之外的文件用短篇号：提示词里要求标 `〔复用·篇号〕`，篇号得能塞进标记里。
+#: 这里的 parents[1] 指本仓库根（E:\voicekit），是开发目录不是作者包路径。
+_REPO_ROOT = SCRIPT_DIR.parents[1]
 EXTRA = (
-    ("H1", REPO_ROOT / "tmp/voice-live/huang-author.md"),
-    ("H2", REPO_ROOT / "dev/reports/voice/huang-author-final-20261111.md"),
+    ("H1", _REPO_ROOT / "tmp/voice-live/huang-author.md"),
+    ("H2", _REPO_ROOT / "dev/reports/voice/huang-author-final-20261111.md"),
 )
 
 #: 类型 → 规则。一句可命中多类，按 KINDS 顺序记主类型。
@@ -58,7 +67,10 @@ def _paragraphs(text: str) -> list[str]:
 
 def extract() -> list[dict]:
     rows: list[dict] = []
-    sources = [(path.stem[:3], path.read_text(encoding="utf-8")) for path in sorted(CORPUS.glob("*.md"))]
+    corpus = corpus_path()
+    if corpus is None:
+        raise SystemExit("[FAIL] 这个包没有 corpus：重建判断库要读作者原文（--pack 指向带语料的包）")
+    sources = [(path.stem[:3], path.read_text(encoding="utf-8")) for path in sorted(corpus.glob("*.md"))]
     sources += [(doc_id, path.read_text(encoding="utf-8")) for doc_id, path in EXTRA if path.exists()]
     for doc_id, text in sources:
         for para_index, paragraph in enumerate(_paragraphs(text), 1):
@@ -87,17 +99,19 @@ def extract() -> list[dict]:
 
 def write(rows: list[dict] | None = None) -> int:
     rows = rows if rows is not None else extract()
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    with OUT.open("w", encoding="utf-8", newline="\n") as handle:
+    path = out_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="\n") as handle:
         for row in rows:
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
     return len(rows)
 
 
 def load() -> list[dict]:
-    if not OUT.is_file():
+    path = out_path()
+    if not path.is_file():
         return []
-    with OUT.open(encoding="utf-8") as handle:
+    with path.open(encoding="utf-8") as handle:
         return [json.loads(line) for line in handle if line.strip()]
 
 
@@ -235,15 +249,19 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--for", dest="for_material", type=Path, help="起稿用：给一篇材料找可复用的旧句")
     ap.add_argument("--kind", help="只看某一类（联想/为什么/后果/不确定/判断/自我关联）")
     ap.add_argument("--limit", type=int, default=3)
+    ap.add_argument("--pack", type=Path, help="作者包目录（默认找 ./voices/）")
     ap.add_argument("--selftest", action="store_true")
     args = ap.parse_args(argv)
+    from ..paths import use_pack
+
+    use_pack(args.pack)
     if args.selftest:
         return _selftest()
     if args.write:
         rows = extract()
         count = write(rows)
         kinds = Counter(row["kind"] for row in rows)
-        print(f"写入 {OUT}：{count} 条")
+        print(f"写入 {out_path()}：{count} 条")
         for kind, number in kinds.most_common():
             print(f"  {kind}: {number}")
         return 0

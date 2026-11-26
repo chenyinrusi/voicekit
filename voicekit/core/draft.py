@@ -30,6 +30,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
+from .. import paths  # noqa: E402
 from . import judgments  # noqa: E402
 from . import rewrite  # noqa: E402
 from .rewrite_prompt import modern_voice_examples, style_digest  # noqa: E402
@@ -472,7 +473,9 @@ def main(argv: list[str] | None = None) -> int:
         except (AttributeError, ValueError):
             pass
     ap = argparse.ArgumentParser(description="按作者的路径起一篇初稿（判断/情绪分复用与推断）")
-    ap.add_argument("--file", type=Path, help="材料（事实清单）")
+    ap.add_argument("--material", "--file", dest="file", type=Path,
+                    help="材料文件路径（.md/.txt，一行一条事实）；不是一段话")
+    ap.add_argument("--pack", type=Path, help="作者包目录（默认找 ./voices/ 或 $VOICEKIT_PACK）")
     ap.add_argument("--out", type=Path, help="初稿写哪（默认 <file>.draft.md）")
     ap.add_argument("--json", dest="json_out", type=Path, help="机器可读报告")
     ap.add_argument("--examples", type=int, default=6, help="提示词里放几段他的腔当锚")
@@ -496,7 +499,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.selftest:
         return _selftest()
     if not args.file:
-        ap.error("要 --file 材料")
+        ap.error("要 --material 材料文件")
+    if not args.file.is_file():
+        # 2026-11-27 实测：把「一句话材料」直接写在 --material 后面，报的是
+        # `OSError: [Errno 22] Invalid argument: '<一句话材料>'`——用户读不懂。
+        ap.error(f"--material 要一个材料文件路径（.md/.txt），不是一段话：{args.file}")
     material = args.file.read_text(encoding="utf-8")
     if args.facts_only:
         rows = facts_only(material)
@@ -516,6 +523,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  · {item}")
         print(f"\n[OK] 事实骨架写到 {out_path}")
         return 0
+    # 从这里开始要读作者包（旧句 / profile / 语料）：一次把包钉下来，
+    # core 里的路径函数都从它推——装成 wheel 时没有开发树的 voices/。
+    paths.use_pack(args.pack)
     excluded = set(args.exclude or [])
     reuse: list[dict] = ([] if args.no_reuse
                          else judgments.for_material(material, args.reuse_limit, exclude=excluded))

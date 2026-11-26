@@ -1,4 +1,4 @@
-"""voicekit 命令行：lint（体检）/ report（一页报告）/ build（提炼）/ draft（起稿）。
+"""voicekit 命令行：quick（无基线快检）/ lint（体检）/ report（一页报告）/ build（提炼）/ draft（起稿）。
 
 设计原则：本层只做参数与路径解析，判据与算法全在 core/ 里。
 """
@@ -6,11 +6,37 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
 from . import __version__, paths, report
 from .core import style_lint
+
+
+def _quick(args: argparse.Namespace) -> int:
+    from .core import quick
+
+    try:
+        text = _read_text(args.file)
+    except OSError as exc:
+        print(f"[FAIL] {exc}", file=sys.stderr)
+        return 2
+    label = "<stdin>" if args.file == "-" else Path(args.file).name
+    try:
+        data = quick.report(text, label)
+    except ValueError as exc:  # 空文件 / 纯英文 / 没有汉字：没法量，不是脚本坏了
+        print(f"[FAIL] cannot measure {label}: {exc}", file=sys.stderr)
+        return 2
+    print(json.dumps(data, ensure_ascii=False, indent=1) if args.json else quick.render(data))
+    return 0
+
+
+def _read_text(path: str) -> str:
+    """`-` 读 stdin。Windows 管道默认 cp1252，所以先收字节再自己按 UTF-8 解。"""
+    if path == "-":
+        return sys.stdin.buffer.read().decode("utf-8-sig", "replace")
+    return Path(path).read_bytes().decode("utf-8-sig", "replace")
 
 
 def _lint(args: argparse.Namespace) -> int:
@@ -19,6 +45,8 @@ def _lint(args: argparse.Namespace) -> int:
     argv += ["--pack", str(pack)]
     if args.json:
         argv += ["--json"]
+    if args.annotate:
+        argv += ["--annotate"]
     rc = style_lint.main(argv)
     if args.html is not None:
         out = None if args.html is True else Path(args.html)
@@ -28,7 +56,7 @@ def _lint(args: argparse.Namespace) -> int:
 
 
 def _report(args: argparse.Namespace) -> int:
-    pack = paths.resolve_pack(args.pack) if not args.no_pack else None
+    pack = paths.resolve_pack(args.pack)
     page = report.render(args.file, pack, args.out, args.title)
     print(f"一页报告：{page}")
     return 0
@@ -54,8 +82,6 @@ def _build(args: argparse.Namespace) -> int:
 
 def _write_pack_json(pack_dir: Path, slug: str, author: str, corpus: Path) -> None:
     """提炼完补一个 pack.json，让这个目录马上能被 --pack 用。"""
-    import json
-
     corpus_path = Path(corpus).resolve()
     try:
         corpus_rel = corpus_path.relative_to(pack_dir.resolve())
@@ -79,6 +105,7 @@ def _draft(args: argparse.Namespace) -> int:
     from .core import draft
 
     argv = ["--file", str(args.material)]
+    argv += ["--pack", str(args.pack)] if args.pack else []
     argv += ["--out", str(args.out)] if args.out else []
     argv += ["--dry-run"] if args.dry_run else []
     argv += ["--provider", args.provider, "--model", args.model] if args.model else ["--provider", args.provider]
@@ -88,7 +115,11 @@ def _draft(args: argparse.Namespace) -> int:
 def _judge(args: argparse.Namespace) -> int:
     from .core import release_gate
 
-    pack = paths.resolve_pack(args.pack)
+    try:
+        pack = paths.resolve_pack(args.pack)
+    except SystemExit as exc:  # 找不到包是环境错，rc=2；rc=1 会被脚本读成「不像」
+        print(f"[FAIL] {exc}", file=sys.stderr)
+        return 2
     return release_gate.run(
         args.file, pack, as_json=args.json, dry_run=args.dry_run
     )
@@ -99,10 +130,16 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--version", action="version", version=f"voicekit {__version__}")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
+    qk = sub.add_parser("quick", help="快检：没有作者包也能量一遍（只报特征，不判好坏）")
+    qk.add_argument("file", nargs="?", default="-", help="要量的稿子（.md/.txt）；`-` 读 stdin")
+    qk.add_argument("--json", action="store_true", help="输出机器可读 JSON")
+    qk.set_defaults(func=_quick)
+
     lint = sub.add_parser("lint", help="体检：42 条可数属性，逐条过/不过")
     lint.add_argument("file", type=Path, help="要体检的稿子（.md/.txt）")
     lint.add_argument("--pack", type=Path, help="作者包目录（默认找 ./voices/）")
     lint.add_argument("--json", action="store_true", help="输出机器可读 JSON")
+    lint.add_argument("--annotate", action="store_true", help="不过的属性后面给出段落/句子位置")
     lint.add_argument("--html", nargs="?", const=True, default=None, metavar="OUT",
                       help="同时生成一页 HTML 报告（可给输出路径）")
     lint.add_argument("--title", help="报告标题")
@@ -111,7 +148,6 @@ def build_parser() -> argparse.ArgumentParser:
     rep = sub.add_parser("report", help="一页 HTML 报告：结论 3 行 + 先改这三条 + 全部条目")
     rep.add_argument("file", type=Path)
     rep.add_argument("--pack", type=Path)
-    rep.add_argument("--no-pack", action="store_true", help="不加载作者包（只跑通用检查）")
     rep.add_argument("-o", "--out", type=Path, help="写到哪（默认 <file>-report.html）")
     rep.add_argument("--title")
     rep.set_defaults(func=_report)
@@ -125,7 +161,9 @@ def build_parser() -> argparse.ArgumentParser:
     build.set_defaults(func=_build)
 
     dr = sub.add_parser("draft", help="起稿：按作者的腔写一篇初稿（要 API key）")
-    dr.add_argument("--material", required=True, type=Path, help="材料（事实清单）")
+    dr.add_argument("--material", required=True, type=Path,
+                    help="材料文件路径（.md/.txt，一行一条事实）；不是一段话")
+    dr.add_argument("--pack", type=Path, help="作者包目录（默认找 ./voices/）")
     dr.add_argument("--out", type=Path, help="初稿写到哪")
     dr.add_argument("--provider", default="deepseek")
     dr.add_argument("--model")

@@ -86,11 +86,14 @@ MEASURED_SIZES = {
 }
 
 
-def expected_sizes(corpus: Path = DEFAULT_CORPUS) -> dict:
-    """本次评测应有的样本量：作者池从语料现算，别的两类是外部目录的固定数。"""
+def expected_sizes(corpus: Path = DEFAULT_CORPUS, baseline: Path | None = None) -> dict:
+    """本次评测应有的样本量：作者池从语料现算，别的两类是外部目录的固定数。
+
+    `baseline` 给了就读包里的基线；不给仍读开发树，仓库内脚本不变。
+    """
     accepted = bp.load_corpus(corpus)[0]
-    baseline = jl.load_baseline() or {}
-    sample = {str(name) for name in baseline.get("sample", {}).get("docs", [])}
+    found = jl.load_baseline(baseline) if baseline is not None else jl.load_baseline()
+    sample = {str(name) for name in (found or {}).get("sample", {}).get("docs", [])}
     return dict(MEASURED_SIZES, author_pool=len(accepted) - len(sample))
 
 GENRE_HINT = (
@@ -410,9 +413,17 @@ def verify_set(
 
 
 def check_set_compatible(
-    set_obj: dict, model: str | None, require_measured: bool = True
+    set_obj: dict,
+    model: str | None,
+    require_measured: bool = True,
+    *,
+    corpus: Path | None = None,
+    baseline: Path | None = None,
 ) -> str | None:
-    """基线是「模型 + prompt + 逻辑版本 + 样例 + 实测」的产物；不一致就不许判。"""
+    """基线是「模型 + prompt + 逻辑版本 + 样例 + 实测」的产物；不一致就不许判。
+
+    钉死集要拿 `corpus` + 包里 `baseline` 现算评测样本量；不给就走开发树默认（仓库内脚本）。
+    """
     if set_obj.get("protocol") != PROTOCOL:
         return f"exemplar protocol {set_obj.get('protocol')!r} != {PROTOCOL!r}"
     if set_obj.get("prompt_version") != PROMPT_VERSION:
@@ -459,7 +470,7 @@ def check_set_compatible(
         )
     if require_measured and not unmeasured:
         measured = set_obj.get("measured") or {}
-        for key, expected in expected_sizes().items():
+        for key, expected in expected_sizes(corpus or DEFAULT_CORPUS, baseline).items():
             got = (measured.get(key) or {}).get("n")
             if got != expected:
                 return (

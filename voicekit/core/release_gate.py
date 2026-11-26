@@ -86,21 +86,29 @@ def run(
     path = Path(file)
     if not path.is_file():
         return fail(f"稿件不存在：{path}")
-    text = path.read_text(encoding="utf-8")
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        return fail(f"稿件读不进来（要 UTF-8）：{path}：{exc}")
 
     try:
         pack = pk.load_pack(Path(pack_path))
-    except pk.PackError as exc:
+    except (pk.PackError, OSError) as exc:
         return fail(f"作者包读不进来：{exc}")
 
     set_path = Path(pack["exemplar"])
-    set_obj = ej.load_set(set_path)
+    try:
+        set_obj = ej.load_set(set_path)
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        return fail(f"exemplar_baseline.json 读不进来：{set_path}：{exc}")
     if set_obj is None:
         return fail(
             f"包里没有 exemplar_baseline.json：{set_path}。"
             "先建基线（泛型包 build --pack / panchen 用 exemplar_judge --eval --write），"
             "不能拿别的判定顶替"
         )
+    if not isinstance(set_obj, dict):
+        return fail(f"exemplar_baseline.json 不是对象：{set_path}")
 
     corpus, corpus_how = _corpus(pack, set_obj)
     if corpus is None:
@@ -127,8 +135,11 @@ def run(
         return fail(f"包里的 profile.json 找不到：{profile_path}；判定要它做同人参照")
     baseline_path = Path(pack["baseline"])
     if baseline_path.is_file():
-        baseline = jl.load_baseline(baseline_path)
-        stale = jl.check_profile_match(baseline, profile_path)
+        try:
+            baseline = jl.load_baseline(baseline_path) or {}
+            stale = jl.check_profile_match(baseline, profile_path)
+        except (OSError, json.JSONDecodeError, ValueError, AttributeError, TypeError) as exc:
+            return fail(f"judge_baseline.json 读不进来：{baseline_path}：{exc}")
         if stale:
             # 换成中文人话，并把两个短指纹摆出来：旧指纹时只看到一句英文 rc=2 最难受。
             return fail(
@@ -183,7 +194,9 @@ def run(
         llm = factory(jl.DEFAULT_PROVIDER, model)
         actual = str(getattr(llm, "model", "") or model)
         try:
-            mismatch = ej.check_set_compatible(set_obj, actual)
+            mismatch = ej.check_set_compatible(
+        set_obj, actual, corpus=corpus, baseline=Path(pack["baseline"])
+    )
             if mismatch:
                 raise jl.JudgeError(mismatch)
             payload = await ej.judge_text(

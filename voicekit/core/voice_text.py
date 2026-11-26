@@ -1,4 +1,4 @@
-"""从 rewrite.py 拆出来的共用小件：路径常量 + 段落工具 + 具体账。
+"""从 rewrite.py 拆出来的共用小件：作者包路径函数 + 段落工具 + 具体账。
 
 拆出来的原因只有一个：`scripts/voice/rewrite.py` 触到「模块 ≤1000 行」的棘轮
 （2026-11-10 实测 1098 行；2026-11-11 账本函数再搬一次）。这里放两边都要用的东西，避免各写一份。
@@ -10,11 +10,34 @@ import re
 from collections import Counter
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-VOICE_CORE = REPO_ROOT / "voices/panchen-voice/references/voice-core.md"
-PROFILE = REPO_ROOT / "voices/panchen-voice/profile.json"
-#: 他的语料。事实灯与「现在的腔」样例都靠它。
-CORPUS = REPO_ROOT / "voices/panchen-voice/corpus"
+from ..paths import active_pack
+from .pack_lib import PackError, load_pack
+
+
+def _pack() -> dict:
+    """作者包：路径的唯一来源（`--pack` → `VOICEKIT_PACK` → `./voices/`）。
+
+    以前这里是 `Path(__file__).resolve().parents[2] / "voices/..."`：只在开发树成立，
+    装成 wheel 后指向 site-packages/voices（不存在）。所以改成懒函数，由 `paths` 定包。
+    """
+    try:
+        return load_pack(active_pack())
+    except PackError as exc:  # 包的 pack.json 坏了：给人话，不抛 traceback
+        raise SystemExit(f"[FAIL] {exc}") from exc
+
+
+def profile_path() -> Path:
+    return _pack()["profile"]
+
+
+def corpus_path() -> Path | None:
+    """作者的语料目录；只发基线的包没有 corpus（`None`），调用方要降级不能报错。"""
+    return _pack()["corpus"]
+
+
+def voice_core_path() -> Path:
+    """改稿纪律的来源；包内约定放在 `references/voice-core.md`。"""
+    return _pack()["dir"] / "references" / "voice-core.md"
 
 
 def split_paragraphs(text: str) -> list[str]:

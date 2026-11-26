@@ -43,9 +43,7 @@ from .rewrite_prompt import (  # noqa: E402 - 依赖下面的 sys.path 设置
     voice_rules,
 )
 from .voice_text import (  # noqa: E402
-    CORPUS,
-    PROFILE,
-    VOICE_CORE,
+    corpus_path,
     countable_mentions,
     join_paragraphs,
     ledger_tokens,
@@ -202,8 +200,9 @@ def title_dropped(source: str, out: str) -> str:
 
 def _provenance_index() -> dict[str, list[tuple[str, str]]]:
     """token → [(篇号, 那一篇的正文)]。只建一次；语料缺了就返回空（不拦）。"""
-    if not _PROVENANCE and CORPUS.is_dir():
-        for path in sorted(CORPUS.glob("*.md")):
+    corpus = corpus_path()
+    if not _PROVENANCE and corpus is not None and corpus.is_dir():
+        for path in sorted(corpus.glob("*.md")):
             doc = path.name.split("__")[0]
             text = path.read_text(encoding="utf-8")
             seen: set[str] = set()

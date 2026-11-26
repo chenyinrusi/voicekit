@@ -9,26 +9,27 @@ from __future__ import annotations
 import re
 
 from .voice_text import (
-    CORPUS,
-    PROFILE,
-    VOICE_CORE,
+    corpus_path,
+    profile_path,
     split_paragraphs,
     uses_blank_lines,
+    voice_core_path,
 )
 
 
 def load_discipline() -> str:
     """voice-core.md 的「改稿纪律」一节，原文取（不复制到代码里）。"""
-    text = VOICE_CORE.read_text(encoding="utf-8")
+    path = voice_core_path()
+    text = path.read_text(encoding="utf-8")
     match = re.search(r"^## 改稿纪律.*?(?=^## )", text, re.S | re.M)
     if not match:
-        raise SystemExit(f"[FAIL] {VOICE_CORE} 里找不到「改稿纪律」一节")
+        raise SystemExit(f"[FAIL] {path} 里找不到「改稿纪律」一节")
     return match.group(0).strip()
 
 
 def load_core_hints() -> list[str]:
     """6 条底色里的「改稿时看」+ 标题，给改稿人当镜头。"""
-    text = VOICE_CORE.read_text(encoding="utf-8")
+    text = voice_core_path().read_text(encoding="utf-8")
     hints = []
     for block in re.findall(r"^## (\d+\..*?)(?=^## )", text, re.S | re.M):
         title = block.splitlines()[0].strip()
@@ -69,7 +70,7 @@ def load_protected_rules() -> str:
     rules = block.group(1).strip() if block else ""
     if not rules:
         raise SystemExit(
-            f"[FAIL] {VOICE_CORE} 里「一个字都不许动」那节没解析出来（是不是改了标题措辞？）"
+            f"[FAIL] {voice_core_path()} 里「一个字都不许动」那节没解析出来（是不是改了标题措辞？）"
         )
     return (
         "**一个字都不许动：**\n\n"
@@ -86,7 +87,7 @@ def style_digest() -> str:
     """从 profile.json 读几个能当靶子的数字（不抄 generation_guidance：FIX-367 说它有的维方向反）。"""
     import json
 
-    data = json.loads(PROFILE.read_text(encoding="utf-8"))
+    data = json.loads(profile_path().read_text(encoding="utf-8"))
     by_id = {attr["attribute_id"]: attr for attr in data["attributes"]}
     sent = by_id["L2-01"]["observed_value"]
     classic = by_id["L1-12"]["observed_value"]
@@ -180,8 +181,11 @@ def modern_voice_examples(limit: int = 3, chars: int = 220) -> list[str]:
 
     只取开头，是因为开头最能看出「一开口怎么说话」；不取全文，控制提示词体积。
     """
+    corpus = corpus_path()
+    if corpus is None:
+        return []
     examples = []
-    for path in sorted(CORPUS.glob("*.md")):
+    for path in sorted(corpus.glob("*.md")):
         doc = path.name.split("__")[0]
         if doc in {"034", "037"} or doc == "064":
             continue

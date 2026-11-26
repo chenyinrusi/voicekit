@@ -25,6 +25,26 @@ def candidates() -> list[Path]:
     return sorted(p for p in root.iterdir() if p.is_dir() and (p / PACK_FILE).is_file())
 
 
+_active_pack: Path | None = None
+
+
+def use_pack(explicit: Path | str | None = None) -> Path:
+    """把这次运行用的包钉下来；core 里的路径函数都从它推，不再猜开发树。
+
+    必须在读 profile / 语料之前调用（`draft.main` 解析完 `--pack` 就调）。
+    """
+    global _active_pack
+    _active_pack = resolve_pack(explicit)
+    return _active_pack
+
+
+def active_pack() -> Path:
+    """这次运行用的包目录：CLI 已用 `use_pack` 钉过就用它，否则按下面的顺序找。"""
+    if _active_pack is None:
+        return use_pack(None)
+    return _active_pack
+
+
 def resolve_pack(explicit: Path | str | None = None) -> Path:
     """返回作者包目录；找不到就抛 SystemExit，并列出找过的地方。"""
     if explicit:

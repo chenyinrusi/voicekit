@@ -26,7 +26,10 @@ from . import build_profile as bp  # noqa: E402
 from . import pack_lib as pk  # noqa: E402
 from . import voice_lib as lib  # noqa: E402
 
-DEFAULT_PROFILE = bp.DEFAULT_OUT
+#: 没给 `--pack` 时**不再**回落到开发树的 `voices/panchen-voice/profile.json`
+#: （wheel 里那个路径不存在，报错只会指向 site-packages/voices）。要基线就显式给 --pack。
+DEFAULT_PROFILE: Path | None = None
+#: 语料只有 `--selftest` / `--calibrate` 用，是仓库内自检，允许指开发树。
 DEFAULT_CORPUS = bp.DEFAULT_CORPUS
 
 #: 比对与判定全部来自 voice_lib（build_profile 也用它，避免两份实现）。
@@ -135,6 +138,16 @@ def _print_report(result: dict, label: str, *, verbose: bool) -> None:
         if verbose or not row["ok"]:
             mark = "PASS" if row["ok"] else "FAIL"
             print(f"  {mark} {row['attribute_id']} {row['attribute_name']}: {row['detail']}")
+
+
+def _print_evidence(result: dict) -> None:
+    """只给不过的条目：能指到句就贴原句，全篇统计就明说没有。"""
+    fails = [r for r in result["rows"] if not r["ok"]]
+    if not fails:
+        return
+    print("-- 句级证据（¶段 句N，只标位置，不判好坏）")
+    for row in fails:
+        print(f"  {row['attribute_id']} {row['attribute_name']}: {row['evidence_note']}")
 
 
 def selftest(profile_path: Path, corpus: Path) -> int:
@@ -482,6 +495,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--calibrate", action="store_true", help="measure 误拒率/误放率 on corpus + negatives")
     ap.add_argument("--json", action="store_true", help="machine-readable output")
     ap.add_argument("--verbose", action="store_true", help="print passing attributes too")
+    ap.add_argument("--annotate", action="store_true", help="每条不过的属性给出段落/句子位置")
     args = ap.parse_args(argv)
 
     try:
@@ -504,6 +518,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[FAIL] {exc}", file=sys.stderr)
         return 2
 
+    if not args.profile:
+        print(
+            "[FAIL] 没有 --pack 也没有 --profile：体检要作者基线；"
+            "用 --pack <作者包>，或 --profile <profile.json>",
+            file=sys.stderr,
+        )
+        return 2
     if not args.profile.is_file():
         print(f"[FAIL] profile not found: {args.profile}", file=sys.stderr)
         return 2
@@ -529,7 +550,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[FAIL] bad profile: {problem}", file=sys.stderr)
         return 2
     try:
-        raw = lib.measure(args.file.read_text(encoding="utf-8"))
+        draft_text = args.file.read_text(encoding="utf-8")
+        raw = lib.measure(draft_text)
     except ValueError as exc:  # 没有汉字：输入不可评，不是脚本坏了
         print(f"[FAIL] cannot score {args.file}: {exc}", file=sys.stderr)
         return 2
@@ -547,10 +569,16 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
     result = compare(profile, resolve_values(profile, raw))
+    if args.annotate:
+        from . import evidence
+
+        evidence.attach(result["rows"], draft_text)
     if args.json:
         print(json.dumps(dict(result, diagnostic_only=True), ensure_ascii=False, indent=1))
     else:
         _print_report(result, args.file.name, verbose=args.verbose)
+        if args.annotate:
+            _print_evidence(result)
         print(
             f"-- pass line {pass_score(profile)}；"
             f"核心轴合成偏差 {result['core_dev']}（上限 {result['core_limit']}）"
