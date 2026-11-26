@@ -61,11 +61,19 @@ def _settings(provider: str, model: str | None) -> tuple[str, str, str]:
     return base.rstrip("/"), key, model
 
 
+@dataclass
+class _Response:
+    """一次回复：正文 + usage。判定侧按 `.content` / `.usage` 取值，别退回裸字符串。"""
+
+    content: str
+    usage: dict
+
+
 class _Client:
     def __init__(self, provider: str, model: str | None) -> None:
         self.base, self.key, self.model = _settings(provider, model)
 
-    def _post(self, messages: list[dict], temperature: float, timeout: float) -> str:
+    def _post(self, messages: list[dict], temperature: float, timeout: float) -> _Response:
         body = json.dumps(
             {"model": self.model, "messages": messages, "temperature": temperature}
         ).encode("utf-8")
@@ -82,11 +90,13 @@ class _Client:
             detail = exc.read().decode("utf-8", "replace")[:800]
             raise SystemExit(f"LLM HTTP {exc.code}: {detail}") from exc
         try:
-            return payload["choices"][0]["message"]["content"]
+            content = payload["choices"][0]["message"]["content"]
         except (KeyError, IndexError) as exc:
             raise SystemExit(f"unexpected LLM payload: {str(payload)[:800]}") from exc
+        usage = payload.get("usage")
+        return _Response(content=str(content or ""), usage=dict(usage or {}))
 
-    async def chat(self, messages: list, temperature: float = 0.9, timeout: float | None = None) -> str:
+    async def chat(self, messages: list, temperature: float = 0.9, timeout: float | None = None) -> _Response:
         payload = [m.as_dict() if isinstance(m, Message) else dict(m) for m in messages]
         return await asyncio.to_thread(
             self._post, payload, temperature, timeout if timeout is not None else 180.0

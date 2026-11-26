@@ -85,6 +85,15 @@ def _draft(args: argparse.Namespace) -> int:
     return draft.main(argv)
 
 
+def _judge(args: argparse.Namespace) -> int:
+    from .core import release_gate
+
+    pack = paths.resolve_pack(args.pack)
+    return release_gate.run(
+        args.file, pack, as_json=args.json, dry_run=args.dry_run
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="voicekit", description="提炼一个人的文风，体检一篇稿子，按他的腔起稿。")
     ap.add_argument("--version", action="version", version=f"voicekit {__version__}")
@@ -122,6 +131,13 @@ def build_parser() -> argparse.ArgumentParser:
     dr.add_argument("--model")
     dr.add_argument("--dry-run", action="store_true", help="0 元：只出提示词")
     dr.set_defaults(func=_draft)
+
+    jd = sub.add_parser("judge", help="判同人：拿 10 篇样例判这篇是不是同一个人（要花 token，只作参考）")
+    jd.add_argument("file", type=Path, help="要判的稿子（.md/.txt）")
+    jd.add_argument("--pack", type=Path, help="作者包目录（默认找 ./voices/）")
+    jd.add_argument("--json", action="store_true", help="输出机器可读 JSON")
+    jd.add_argument("--dry-run", action="store_true", help="0 元：只打印提示词规模，不调模型")
+    jd.set_defaults(func=_judge)
     return ap
 
 

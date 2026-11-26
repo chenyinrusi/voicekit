@@ -6,4 +6,4 @@
 - `voicekit.compat`：标准库 LLM 适配层（OpenAI 兼容接口）
 """
 
-__version__ = "0.1.4"
+__version__ = "0.1.5"
