@@ -8,6 +8,14 @@
 ## 装
 
 ```bash
+pip install writer-voice     # 发行名是 writer-voice，装完命令叫 voicekit
+```
+
+装用 PyPI 包名 `writer-voice`；模块名和命令名都是 `voicekit`。以后选名字时这点说清楚省得找错。
+
+本地开发：
+
+```bash
 py -3.10 -m pip install -e .
 ```
 
