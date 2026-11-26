@@ -19,6 +19,7 @@ from pathlib import Path
 
 from . import exemplar_judge as ej
 from . import judge_lib as jl
+from . import pack_lib as pk
 from .exemplar_measured import negatives_digest
 
 PROTOCOL = ej.PROTOCOL
@@ -48,7 +49,7 @@ def negatives_digest_of(pack: dict) -> str | None:
 
 def eval_rows(pack: dict, set_obj: dict) -> list[dict]:
     """评测集：12 篇留出 + 负样本名单（≥20）+ 2 篇通用 AI 稿。"""
-    corpus = Path(pack["corpus"])
+    corpus = pk.pack_corpus(pack, "pack eval")
     rows: list[dict] = []
     holdout = set_obj.get("holdout")
     if not isinstance(holdout, list) or len(holdout) != HOLDOUT_COUNT:
@@ -244,7 +245,7 @@ async def run_eval(
 ) -> int:
     """跑整批评测；达标且 write 时写 measured。返回 0 达标 / 1 未达标。"""
     rows = eval_rows(pack, set_obj)
-    corpus = Path(pack["corpus"])
+    corpus = pk.pack_corpus(pack, "pack eval")
 
     async def call(row: dict) -> tuple[str, str, dict]:
         payload = await ej.judge_text(

@@ -40,7 +40,8 @@ voicekit draft --material 材料.md --dry-run   # 先看提示词，0 元
 voicekit draft --material 材料.md --out 初稿.md
 ```
 
-`lint` 退出码：`0` 全过，`1` 有不过的条目，`2` 读不了/太短（<200 汉字不给稳定分数）。
+`lint` 退出码看的是「像不像同一个人」（`0` 像 / `1` 不像 / `2` 读不了或太短，<200 汉字不给稳定分数），
+不是「有几条没过」；具体过没过看 `passed / total` 与 `--json` 的明细。
 
 ## 作者包长什么样
 
@@ -56,6 +57,7 @@ voices/panchen-voice/
 ```
 
 只发基线、不发语料的包（比如产品里内置的作者包）是合法包：`pack.json` 里不写 `corpus` 即可。
+这种包能跑 `lint` / `report` / `draft`；要跑 `judge` / `eval` 这类读作者原文的命令，必须给带语料的包（或显式 `--corpus`），否则会报「没有 corpus」。
 
 查找顺序：`--pack` → 环境变量 `VOICEKIT_PACK` → `./voices/*/pack.json`。
 

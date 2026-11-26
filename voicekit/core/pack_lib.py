@@ -86,7 +86,7 @@ def load_pack(path: Path) -> dict:
     exemplar_meta = _section(data, "exemplar")
     negatives_meta = _section(data, "negatives")
     corpus = _resolve(root, _path_value(corpus_meta, "corpus", None), None)
-    #: corpus 只有提炼（build）才用，且 build 自己收 --corpus；体检/报告/起稿不需要。
+    #: corpus 只有提炼（build）和读原文的命令（judge / eval）才用；体检/报告/起稿不需要。
     #: 声明了才校验，没声明就是 None —— 否则 CAS 这类「只发基线、不发语料」的包读不进来。
     if corpus is not None and not corpus.is_dir():
         raise PackError(f"pack corpus directory missing: {corpus}")
@@ -106,3 +106,17 @@ def load_pack(path: Path) -> dict:
         "skill": (root / SKILL_FILE).resolve(),
         "negatives": _resolve(root, negatives_dir, None),
     }
+
+
+def pack_corpus(pack: dict, what: str) -> Path:
+    """取包里的语料目录；包没声明 corpus（只发基线）时给人话错误，不是 `Path(None)`。
+
+    只有 judge / eval 这类要读作者原文的命令需要语料；lint / report / draft 不调这个。
+    """
+    corpus = pack.get("corpus")
+    if corpus is None:
+        raise PackError(
+            f"pack {pack.get('slug')!r} 没有 corpus：{what} 要读作者原文，"
+            "只发基线的包跑不了（要用就跑 build 出的带语料的包，或显式给 --corpus）"
+        )
+    return Path(corpus)

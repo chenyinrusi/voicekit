@@ -208,6 +208,8 @@ async def write_draft(
     判前跑和 `judge.py --pack` 同样的三道 guard（r1 P2-7），换模型/未实测的包不会被静默放行。
     """
     pack = pk.load_pack(Path(pack_dir))
+    # 只发基线的包没有 corpus；这里要读原文，早报人话错误，别让下游 Path(None).glob 抛 AttributeError
+    pack["corpus"] = pk.pack_corpus(pack, "recreate eval")
     profile = json.loads(pack["profile"].read_text(encoding="utf-8"))
     set_obj = json.loads(pack["exemplar"].read_text(encoding="utf-8"))
     _verify_judge_set(pack, set_obj, judge_model)

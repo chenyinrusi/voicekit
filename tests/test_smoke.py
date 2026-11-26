@@ -108,6 +108,19 @@ def test_pack_loader_rejects_missing_declared_corpus(tmp_path: Path):
         load_pack(write_pack(tmp_path, corpus={"path": "nope"}))
 
 
+def test_pack_corpus_gives_clear_error_for_baseline_only_pack(tmp_path: Path):
+    """只发基线的包跑 judge/eval：要报人话错误，不能把 None 当路径用。"""
+    from voicekit.core.pack_lib import PackError, load_pack, pack_corpus
+
+    pack = load_pack(write_pack(tmp_path))
+    with pytest.raises(PackError, match="没有 corpus"):
+        pack_corpus(pack, "judge --pack")
+
+    (tmp_path / "corpus").mkdir()
+    with_corpus = load_pack(write_pack(tmp_path, corpus={"path": "corpus"}))
+    assert pack_corpus(with_corpus, "judge --pack") == (tmp_path / "corpus").resolve()
+
+
 def test_humanize_keeps_known_shapes():
     from voicekit.report import humanize
 

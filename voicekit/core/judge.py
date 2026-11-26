@@ -851,7 +851,7 @@ def _resolve_paths(args) -> None:
         args.profile = args.profile or str(pack["profile"])
         args.baseline = args.baseline or str(pack["baseline"])
         args.exemplar_baseline = args.exemplar_baseline or str(pack["exemplar"])
-        args.corpus = args.corpus or str(pack["corpus"])
+        args.corpus = args.corpus or str(pk.pack_corpus(pack, "judge --pack"))
         return
     args.profile = args.profile or str(DEFAULT_PROFILE)
     args.baseline = args.baseline or str(DEFAULT_BASELINE)
