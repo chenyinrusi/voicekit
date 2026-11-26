@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from . import build_profile as bp  # noqa: E402
 from . import pack_lib as pk  # noqa: E402
 from . import voice_lib as lib  # noqa: E402
+from .. import paths  # noqa: E402
 
 #: 没给 `--pack` 时**不再**回落到开发树的 `voices/panchen-voice/profile.json`
 #: （wheel 里那个路径不存在，报错只会指向 site-packages/voices）。要基线就显式给 --pack。
@@ -503,6 +504,8 @@ def main(argv: list[str] | None = None) -> int:
             pack = pk.load_pack(args.pack)
             args.profile = args.profile or pack["profile"]
             args.corpus = args.corpus or pack["corpus"]
+            # 钉住包：加权表（weights.json）也从这里取，别退回开发树。
+            paths.use_pack(args.pack)
             if args.selftest or args.calibrate:
                 # 两个入口都拿 panchen 负样本当参照，不能拿来量别的作者（F-02）。
                 print(

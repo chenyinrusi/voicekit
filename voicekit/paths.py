@@ -45,6 +45,11 @@ def active_pack() -> Path:
     return _active_pack
 
 
+def maybe_active_pack() -> Path | None:
+    """钉过的包；没钉过返回 None（不抛）。给 `weights.json` 这类可选文件用。"""
+    return _active_pack
+
+
 def resolve_pack(explicit: Path | str | None = None) -> Path:
     """返回作者包目录；找不到就抛 SystemExit，并列出找过的地方。"""
     if explicit:

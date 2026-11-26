@@ -225,7 +225,7 @@ def write_exemplar_pack(dir_path: Path, slug: str = "demo", set_slug: str | None
 
 def write_draft(tmp_path: Path) -> Path:
     draft = tmp_path / "draft.md"
-    draft.write_text("风从西边来，我站在门口，看他把伞收起来，抖了两下水。" * 4, encoding="utf-8")
+    draft.write_text("风从西边来，我站在门口，看他把伞收起来，抖了两下水。" * 20, encoding="utf-8")
     return draft
 
 
@@ -521,3 +521,117 @@ def test_lint_real_pack(tmp_path: Path):
     done = run_cli("lint", str(draft), "--pack", str(pack))
     assert done.returncode in (0, 1), done.stderr
     assert "/42" in done.stdout or "42)" in done.stdout
+
+
+def test_weights_come_from_active_pack(tmp_path: Path):
+    """加权表要跟包走：包里有 weights.json 就用它，不许只认开发树。
+
+    装成 wheel 后旧写法指向 site-packages/voices（不存在），加权表静默退化成等权：
+    `score` 不变（放行用等权），但 `score_weighted` 会少报真实值 —— 实测 CAS 包
+    047 号稿：wheel 61.9 / 源码树 68.6。
+    """
+    from voicekit import paths
+    from voicekit.core import voice_lib as lib
+
+    (tmp_path / "pack").mkdir()
+    pack = write_pack(tmp_path / "pack")
+    (pack / "weights.json").write_text(
+        json.dumps({"tiers": [{"weight": 7.0, "ids": ["L9-99"]}]}), encoding="utf-8"
+    )
+    old = paths._active_pack
+    try:
+        paths.use_pack(pack)
+        assert lib.load_weights()["table"].get("L9-99") == 7.0
+    finally:
+        paths._active_pack = old
+        lib.reset_weights()
+
+
+def test_weights_do_not_leak_between_packs(tmp_path: Path):
+    """同一进程连开两个包（脚本常见），加权表不能沿用上一个包的结果。"""
+    from voicekit import paths
+    from voicekit.core import voice_lib as lib
+
+    (tmp_path / "p1").mkdir()
+    first = write_pack(tmp_path / "p1")
+    (first / "weights.json").write_text(
+        json.dumps({"tiers": [{"weight": 7.0, "ids": ["L9-99"]}]}), encoding="utf-8"
+    )
+    (tmp_path / "p2").mkdir()
+    second = write_pack(tmp_path / "p2")
+    (second / "weights.json").write_text(
+        json.dumps({"tiers": [{"weight": 0.5, "ids": ["L9-99"]}]}), encoding="utf-8"
+    )
+    old = paths._active_pack
+    try:
+        paths.use_pack(first)
+        assert lib.load_weights()["table"].get("L9-99") == 7.0
+        paths.use_pack(second)
+        assert lib.load_weights()["table"].get("L9-99") == 0.5
+    finally:
+        paths._active_pack = old
+        lib.reset_weights()
+
+
+def test_sample_corpus_found_from_another_cwd(tmp_path: Path, monkeypatch):
+    """样例集记的相对 corpus 要按「仓库根」找，不能只按 cwd。
+
+    CAS 的 panchen-voice 包写着 "corpus": "archive/dev/..."（相对仓库根）。以前从别的
+    目录跑 judge 会报「样例集记的 corpus 目录不存在」，还打印一个假的绝对路径。
+    """
+    from voicekit.core import release_gate as rg
+
+    repo = tmp_path / "repo"
+    corpus = repo / "archive" / "dev" / "x" / "corpus"
+    corpus.mkdir(parents=True)
+    pack_dir = repo / "skills" / "panchen-voice"
+    (pack_dir / "corpus").mkdir(parents=True)  # 包里没有正文，只留空目录占位
+    set_obj = {"corpus": "archive/dev/x/corpus"}
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    found, how = rg._corpus({"slug": "panchen-voice", "dir": pack_dir}, set_obj)
+    assert found is not None, how
+    assert found.resolve() == corpus.resolve(), (found, how)
+
+
+def test_short_draft_is_refused(tmp_path: Path):
+    """<200 汉字的稿子不给判：10 篇样例比 10 个字，钱花了买噪声。"""
+    pack = write_exemplar_pack(tmp_path / "pack")
+    tiny = tmp_path / "tiny.md"
+    tiny.write_text("风从西边来，我站在门口。", encoding="utf-8")
+    done = run_cli("judge", str(tiny), "--pack", str(pack), "--dry-run", cwd=tmp_path)
+    out = done.stdout + done.stderr
+    assert done.returncode == 2, out
+    assert "太短" in out, out
+
+
+def test_draft_without_pack_is_rc2(tmp_path: Path):
+    """draft 缺包要 rc 2；draft 的 rc 1 只能表示「事实有问题」。"""
+    material = tmp_path / "material.md"
+    material.write_text("事实一\n", encoding="utf-8")
+    done = run_cli("draft", "--material", str(material), "--dry-run", cwd=tmp_path)
+    out = done.stdout + done.stderr
+    assert done.returncode == 2, out
+    assert "[FAIL]" in out, out
+
+
+def test_report_missing_file_is_rc2(tmp_path: Path):
+    """report 撞到坏文件 rc 2；以前 SystemExit 漏成 rc 1，和「不像」同码。"""
+    pack = write_exemplar_pack(tmp_path / "pack")
+    done = run_cli("report", str(tmp_path / "nosuch.md"), "--pack", str(pack), cwd=tmp_path)
+    out = done.stdout + done.stderr
+    assert done.returncode == 2, out
+    assert "[FAIL]" in out, out
+
+
+def test_judge_cache_dir_defaults_to_user_dir(tmp_path: Path, monkeypatch):
+    """缓存默认放用户目录：wheel 装在只读的系统目录也能写。"""
+    from voicekit.core import judge_lib as jl
+
+    monkeypatch.delenv("VOICEKIT_JUDGE_CACHE", raising=False)
+    monkeypatch.delenv("DSH_VOICE_JUDGE_CACHE", raising=False)
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    path = jl.cache_dir()
+    assert path == tmp_path / ".cache" / "voicekit" / "judge", path

@@ -8,16 +8,20 @@
 ## 装
 
 ```bash
-pip install writer-voice     # 发行名是 writer-voice，装完命令叫 voicekit
+py -3.10 -m pip install writer-voice     # 发行名是 writer-voice，装完命令叫 voicekit
 ```
 
 装用 PyPI 包名 `writer-voice`；模块名和命令名都是 `voicekit`。以后选名字时这点说清楚省得找错。
+下面所有命令都写 `py -3.10 -m voicekit`：Windows 上 `pip` 不一定是 3.10 那个。
 
 本地开发：
 
 ```bash
 py -3.10 -m pip install -e .
 ```
+
+**包不在 wheel 里**：`--pack` 要指向你本地的作者包目录（自己 `build` 出来的，或别人给的）。
+装完先跑 `quick` 不需要包；`lint` / `report` / `draft` / `judge` 都要 `--pack`。
 
 只依赖标准库 + PyYAML。`lint` / `report` 不花钱（不调模型）。`build` 只在 `style_distill` 环节要模型；
 `draft` 和 `judge` 要模型。
@@ -53,9 +57,15 @@ voicekit judge 我的稿子.md --pack voices/panchen-voice
 `draft` 要读作者腔：不给 `--pack` 就按下面的查找顺序找，找不到就报人话退出（`rc=2`），不会去猜仓库路径。
 包里没有 `corpus` 时，提示词里「他现在的腔」那节留空，其余照常。
 
-`judge` 退出码：`0` 像 / `1` 不像 / `2` 判不了或环境错（缺基线、基线过期、包与样例集不匹配）。
-它要读作者原文，所以包里必须有 `corpus`（或样例集里记的 corpus 目录）。判定会打印 tokens 与 `cost_usd`；
+`judge` 退出码：`0` 像 / `1` 不像 / `2` 判不了或环境错（稿子 <200 汉字、缺基线、基线过期、
+包与样例集不匹配、模型换过）。样例正文优先读包里的 `corpus`，没有就读样例集记的目录
+（相对路径按 cwd → 包目录 → 包目录往上三层找）。判定会打印 tokens 与 `cost_usd`；
 **它说像不等于作者肯签字**，放行仍由人拍板。
+判定缓存默认放 `~/.cache/voicekit/judge`，可用 `VOICEKIT_JUDGE_CACHE` 改；同一稿同一基线命中缓存不花钱。
+
+`draft` 退出码：`0` 写了 / `1` 事实有问题 / `2` 缺包、读不了、参数错。
+`report`（含 `lint --html`）碰到读不了的文件也是 `rc=2`，不会漏成 `1`。
+`--dry-run` 会把能查的都查一遍（含模型与样例集是否匹配、稿子是否太短），所以预检绿了真跑就不会断。
 
 `quick` 退出码：`0` 量完了（汉字 <200 会多一行提醒，但照样给数）/ `2` 文件读不了、空文件、没有汉字。
 它**没有作者基线**，所以不给分、不判像不像谁；`--json` 里明写 `"no_author_baseline": true`。
@@ -85,9 +95,14 @@ voices/panchen-voice/
 ```
 
 只发基线、不发语料的包（比如产品里内置的作者包）是合法包：`pack.json` 里不写 `corpus` 即可。
-这种包能跑 `lint` / `report` / `draft`；要跑 `judge` 这类读作者原文的命令，必须给带语料的包，否则会报「找不到 10 篇样例正文」。
+这种包能跑 `lint` / `report` / `draft`；`judge` 还要 10 篇样例正文，顺序是：
+包里的 `corpus` → 样例集 `exemplar_baseline.json` 记的目录 → 两边都没有才报「找不到 10 篇样例正文」。
 `judge` 的样例名单不写死：钉死的作者包用包内 `judge_baseline.json` 推，泛型包用 `exemplar_baseline.json` 里记的语料；
 两种都不需要仓库里的 `voices/` 目录，所以装成 wheel、在任意目录都能跑。
+**钉死包的样例集里记的相对路径是相对仓库根的**：把包拷到别处时，要么一起拷语料，要么改那条路径。
+
+`weights.json`（可选）放加权表：`score_weighted` 按它算，`score`（放行参照）仍等权。
+带 `weights.json` 的包，装成 wheel 和从源码跑，`score_weighted` 必须一样。
 
 查找顺序：`--pack` → 环境变量 `VOICEKIT_PACK` → `./voices/*/pack.json`。
 

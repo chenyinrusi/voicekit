@@ -62,6 +62,8 @@ def _lint(args: argparse.Namespace) -> int:
     if args.annotate:
         argv += ["--annotate"]
     rc = style_lint.main(argv)
+    if rc == 2:  # 环境错（文件读不进来等）：别再跑一遍 report
+        return 2
     if args.html is not None:
         out = None if args.html is True else Path(args.html)
         page = report.render(args.file, pack, out, args.title)
@@ -118,8 +120,9 @@ def _write_pack_json(pack_dir: Path, slug: str, author: str, corpus: Path) -> No
 def _draft(args: argparse.Namespace) -> int:
     from .core import draft
 
+    pack = _pack(args.pack)  # 先解析包：缺包要 rc 2，别让 draft 的 rc 1（事实有问题）混用
     argv = ["--file", str(args.material)]
-    argv += ["--pack", str(args.pack)] if args.pack else []
+    argv += ["--pack", str(pack)]
     argv += ["--out", str(args.out)] if args.out else []
     argv += ["--dry-run"] if args.dry_run else []
     argv += ["--provider", args.provider, "--model", args.model] if args.model else ["--provider", args.provider]
@@ -199,6 +202,9 @@ def main(argv: list[str] | None = None) -> int:
         return int(args.func(args) or 0)
     except _MissingPack as exc:  # 环境问题一律 rc 2，别让脚本把「没包」读成「不像」
         print(f"[FAIL] {exc}", file=sys.stderr)
+        return 2
+    except report.LintFailed as exc:  # report / --html 撞到坏文件也是 rc 2，不是「不像」
+        print(f"[FAIL] {exc}：原因见上面的 [FAIL] 行", file=sys.stderr)
         return 2
 
 

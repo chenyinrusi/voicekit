@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import os
 import sys
 from pathlib import Path
 
@@ -36,18 +37,34 @@ def _short(value: object) -> str:
 
 
 def _corpus(pack: dict, set_obj: dict) -> tuple[Path | None, str]:
-    """样例正文目录：包里声明优先，否则用样例集记的（相对当前目录）。返回 (目录, 说明)。"""
+    """样例正文目录：包里声明优先，否则用样例集记的。
+
+    样例集记的路径有两种：绝对路径，或相对仓库根的路径（CAS 的包写给仓库根用）。
+    以前只按 cwd 拼，换个目录就报「目录不存在」，还打印一个假的绝对路径。
+    现在按 cwd → 包目录 → 包目录往上三层依次找；找到哪层就报哪层。
+    """
     if pack.get("corpus"):
-        return Path(pack["corpus"]), "pack.json corpus"
+        declared = Path(pack["corpus"])
+        for base in (Path.cwd(), Path(pack.get("dir") or ".")):
+            candidate = declared if declared.is_absolute() else base / declared
+            if candidate.is_dir():
+                return candidate, "pack.json corpus"
     recorded = set_obj.get("corpus")
-    if recorded:
-        path = Path(str(recorded))
-        if not path.is_absolute():
-            path = Path.cwd() / path
-        if path.is_dir():
-            return path, f"样例集 corpus={recorded}"
-        return None, f"样例集记的 corpus 目录不存在：{path}"
-    return None, "包和样例集都没写 corpus（样例正文只在基线里留了名字与 sha）"
+    if not recorded:
+        return None, "包和样例集都没写 corpus（样例正文只在基线里留了名字与 sha）"
+    rel = Path(str(recorded))
+    if rel.is_absolute():
+        anchors = [Path("/")]
+    else:
+        pack_dir = Path(pack.get("dir") or ".")
+        anchors = [Path.cwd(), pack_dir, *list(pack_dir.parents)[:3]]
+    tried: list[str] = []
+    for base in anchors:
+        candidate = rel if rel.is_absolute() else base / rel
+        tried.append(str(candidate))
+        if candidate.is_dir():
+            return candidate, f"样例集 corpus={recorded}"
+    return None, f"样例集记的 corpus 目录不存在；找过：{'; '.join(tried)}"
 
 
 def _generic(set_obj: dict) -> bool:
@@ -148,13 +165,31 @@ def run(
                 "重建基线：--build-baseline（改过 profile 就得重跑，旧基线不能再用）"
             )
 
-    model = jl.DEFAULT_MODEL
+    model = os.environ.get("VOICEKIT_MODEL") or jl.DEFAULT_MODEL
     exemplar_count = len(set_obj.get("docs") or [])
 
+    draft = clean_body(text)
+    cjk = jl.lib.cjk_count(draft)
+    if cjk == 0:
+        return fail("稿子里没有中文正文，判不了")
+    if cjk < ej.MIN_CJK:
+        # 10 篇样例 vs 10 个字：钱花了买噪声，结论还会被当真。
+        return fail(
+            f"稿子太短（{cjk} 个汉字 < {ej.MIN_CJK}）：判官拿 10 篇样例比这一篇，"
+            "太短结论不稳，还白花 token；换一篇长稿再判"
+        )
+
+    # 兼容检查不花钱，放在 dry-run 之前：0 元预检绿了，真跑就不该断。
+    mismatch_model = ej.check_set_compatible(
+        set_obj,
+        model,
+        corpus=corpus,
+        baseline=Path(pack["baseline"]) if Path(pack["baseline"]).is_file() else None,
+    )
+    if mismatch_model:
+        return fail(f"{mismatch_model}（dry-run 也查这条，免得预检过了真跑才断）")
+
     if dry_run:
-        draft = clean_body(text)
-        if jl.lib.cjk_count(draft) == 0:
-            return fail("稿子里没有中文正文，判不了")
         messages = ej.build_messages(ej.exemplar_texts(set_obj, corpus), draft)
         chars = sum(len(m.content) for m in messages)
         estimate = math.ceil(chars / CHARS_PER_TOKEN)

@@ -726,31 +726,53 @@ CORE_AXES = ("L2-01", "L3-05", "L1-12", "L7-02")
 #: 核心轴合成偏差上限的兜底：profile.meta.core_limit 缺失时用（旧 profile 兼容）。
 CORE_LIMIT_FALLBACK = 4.5
 
-#: 加权分配置（`voices/panchen-voice/weights.json`）。
-#: 2026-11-09 用户拍板：不同组的属性对「像不像」的影响不一样，便宜组减重、不便宜组加重——
-#: 不然只改标点就能涨分（实测 +4.8 分全来自「顿号」「句读节奏」两条）。
-WEIGHTS_FILE = Path(__file__).resolve().parents[2] / "voices/panchen-voice/weights.json"
-_WEIGHTS: dict | None = None
+#: 加权分配置。路径由 `paths` 定：钉住的包里有 weights.json 就用它；
+#: 没有（老脚本、--profile 单跑）才退回开发树 `voices/panchen-voice/weights.json`。
+#: 以前这里直接写 `Path(__file__).parents[2] / "voices/..."`：装成 wheel 后指向
+#: site-packages/voices（不存在），加权表静默退化成等权，`score_weighted` 少报真实值。
+_LEGACY_WEIGHTS_FILE = Path(__file__).resolve().parents[2] / "voices/panchen-voice/weights.json"
+_WEIGHTS: dict[str, dict] = {}
+
+
+def weights_path() -> Path:
+    """加权表文件：包优先（`<pack>/weights.json`），否则退回开发树旧路径。"""
+    from ..paths import maybe_active_pack
+
+    pack = maybe_active_pack()
+    if pack is not None:
+        candidate = pack / "weights.json"
+        if candidate.is_file():
+            return candidate
+    return _LEGACY_WEIGHTS_FILE
+
+
+def reset_weights() -> None:
+    """换包后清缓存（同一进程连开两个包时用）。"""
+    _WEIGHTS.clear()
 
 
 def load_weights() -> dict:
-    """{属性号: 权重} 与配置里的 pass_score。文件缺了/坏了 → 全 1.0（退化成等权，不崩）。"""
-    global _WEIGHTS
-    if _WEIGHTS is None:
+    """{属性号: 权重} 与配置里的 pass_score。文件缺了/坏了 → 全 1.0（退化成等权，不崩）。
+
+    缓存按文件路径分键：换包（路径变了）就重读，不会沿用上一个包的权重。
+    """
+    path = weights_path()
+    key = str(path)
+    if key not in _WEIGHTS:
         try:
-            data = json.loads(WEIGHTS_FILE.read_text(encoding="utf-8"))
+            data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             data = {}
         table: dict[str, float] = {}
         for tier in data.get("tiers") or []:
             for aid in tier.get("ids") or []:
                 table[aid] = float(tier.get("weight", 1.0))
-        _WEIGHTS = {
+        _WEIGHTS[key] = {
             "table": table,
             "pass_score": data.get("pass_score"),
             "calibration": data.get("calibration") or {},
         }
-    return _WEIGHTS
+    return _WEIGHTS[key]
 
 
 def num_pass(obs: float, base: float, rel: float, floor: float) -> bool:

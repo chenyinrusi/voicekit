@@ -80,17 +80,24 @@ def record_share(text: str) -> float:
     return share_non_prose(text)
 
 
+class LintFailed(RuntimeError):
+    """体检跑不下去（文件读不进来等）；`rc=2` 的语义，别混成「不像」。"""
+
+
 def run_lint(draft: Path, pack: Path | None = None) -> dict:
     buf = io.StringIO()
     argv = ["--file", str(draft), "--json", "--annotate"]
     if pack is not None:
         argv += ["--pack", str(pack)]
     with contextlib.redirect_stdout(buf):
-        style_lint.main(argv)
+        rc = style_lint.main(argv)
     raw = buf.getvalue()
+    if rc == 2:
+        # 以前不看 rc，直接去找 JSON，找不到就 SystemExit(1)：环境错被读成「不像」。
+        raise LintFailed("体检没跑完（rc=2）")
     start = raw.find("{")
     if start < 0:
-        raise SystemExit(f"style_lint 没给 JSON：\n{raw[-1500:]}")
+        raise LintFailed(f"style_lint 没给 JSON：\n{raw[-1500:]}")
     data, _ = json.JSONDecoder().raw_decode(raw[start:])
     return data
 

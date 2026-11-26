@@ -692,8 +692,16 @@ def combine(deterministic: dict | None, judge: dict | None) -> dict:
 
 
 def cache_dir() -> Path:
-    override = os.environ.get("DSH_VOICE_JUDGE_CACHE")
-    return Path(override) if override else REPO_ROOT / "tmp" / "voice_judge_cache"
+    """判定缓存目录：环境变量优先，默认放用户目录。
+
+    以前默认 `REPO_ROOT/tmp/voice_judge_cache`：装成 wheel 后是 site-packages（系统级安装
+    只读），写缓存会炸；升级也会把缓存带走。放用户目录两头都解决。
+    """
+    for name in ("VOICEKIT_JUDGE_CACHE", "DSH_VOICE_JUDGE_CACHE"):
+        override = os.environ.get(name)
+        if override:
+            return Path(override)
+    return Path.home() / ".cache" / "voicekit" / "judge"
 
 
 def cache_key(text: str, rubrics: dict, model: str, profile: dict | None = None) -> str:
@@ -738,12 +746,18 @@ def _read_cache(key: str, expected: list[str]) -> dict | None:
 
 
 def _write_cache(key: str, payload: dict, expected: list[str]) -> None:
-    """只缓存完整且证据齐全的结果；失败结果下次必须重判。"""
+    """只缓存完整且证据齐全的结果；失败结果下次必须重判。
+
+    缓存写不进去（只读盘、权限）只警告，不让已经付过钱的判定失败。
+    """
     if not _valid_cache(payload, expected):
         return
     path = cache_dir() / f"{key}.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
+    except OSError as exc:
+        print(f"[warn] 判定缓存写不进去（不影响本次结论）：{path}：{exc}", file=sys.stderr)
 
 
 def _accepted_docs(corpus: Path) -> list[dict]:
