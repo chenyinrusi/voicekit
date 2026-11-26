@@ -140,6 +140,27 @@ def test_record_share_flags_a_record_file():
     assert record_share(prose) < 0.25
 
 
+def test_sample_docs_reuses_pinned_names(monkeypatch):
+    """重建基线沿用旧样本：否则作者样本悄悄换掉，钉死的 exemplar 10 篇全失配。"""
+    from voicekit.core import judge_lib as jl
+
+    docs = [{"file": f"{i:03d}_x.md", "text": ""} for i in range(10)]
+    monkeypatch.setattr(jl, "_accepted_docs", lambda corpus: docs)
+
+    picked = jl._sample_docs(Path("corpus"), 2, pinned=["007_x.md", "002_x.md"])
+
+    assert [doc["file"] for doc in picked] == ["007_x.md", "002_x.md"]
+
+
+def test_sample_docs_rejects_missing_pinned_doc(monkeypatch):
+    from voicekit.core import judge_lib as jl
+
+    monkeypatch.setattr(jl, "_accepted_docs", lambda corpus: [{"file": "001_x.md", "text": ""}])
+
+    with pytest.raises(jl.JudgeError, match="pinned sample docs missing"):
+        jl._sample_docs(Path("corpus"), 1, pinned=["999_gone.md"])
+
+
 @pytest.mark.skipif(not os.environ.get("VOICEKIT_TEST_PACK"), reason="no VOICEKIT_TEST_PACK")
 def test_lint_real_pack(tmp_path: Path):
     pack = Path(os.environ["VOICEKIT_TEST_PACK"])

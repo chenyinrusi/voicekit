@@ -200,8 +200,9 @@ async def build_baseline(
     corpus: Path,
     sample: int,
     use_cache: bool,
+    pinned: list[str] | None = None,
 ) -> dict:
-    docs = _sample_docs(corpus, sample)
+    docs = _sample_docs(corpus, sample, pinned=pinned)
     if len(docs) < MIN_SAMPLE_DOCS:
         raise JudgeError(f"corpus too small: {len(docs)} doc(s) >= 800 CJK under {corpus}")
 
@@ -795,6 +796,8 @@ def _build(args) -> int:
         return 2
     profile = load_profile(Path(args.profile)) if args.profile else None
     corpus = Path(args.corpus)
+    prev = load_baseline(Path(args.baseline))
+    pinned = [str(name) for name in (prev or {}).get("sample", {}).get("docs", [])] or None
 
     async def _run() -> dict:
         from ..compat import release_llm_client
@@ -808,7 +811,8 @@ def _build(args) -> int:
         model = getattr(llm, "model", args.model or args.provider)
         try:
             return await build_baseline(
-                rubrics, profile, llm, model, corpus, args.sample, use_cache=not args.no_cache
+                rubrics, profile, llm, model, corpus, args.sample,
+                use_cache=not args.no_cache, pinned=pinned,
             )
         finally:
             await release_llm_client(llm)

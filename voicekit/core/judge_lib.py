@@ -768,10 +768,27 @@ def _accepted_docs(corpus: Path) -> list[dict]:
     return docs
 
 
-def _sample_docs(corpus: Path, sample: int) -> list[dict]:
+def _sample_docs(corpus: Path, sample: int, pinned: list[str] | None = None) -> list[dict]:
+    """等距抽 `sample` 篇；给了 `pinned` 就用钉住的篇目。
+
+    抽样点数依赖「能进基线的篇数」，而那个数会随 profile 过滤规则改代码而变。
+    重建基线时若重新抽，会悄悄换掉作者样本 → `exemplar_names` 推出来的 10 篇
+    也跟着换 → 钉死的 `exemplar_baseline.json` 全部报失配。所以重建默认沿用
+    已有基线里的篇目；语料真删改了才报错，由人决定要不要重抽。
+    """
     if sample < 1:
         raise JudgeError(f"--sample must be >= 1, got {sample}")
     docs = _accepted_docs(corpus)
+    if pinned:
+        by_name = {doc["file"]: doc for doc in docs}
+        missing = [name for name in pinned if name not in by_name]
+        if missing:
+            raise JudgeError(
+                f"pinned sample docs missing from corpus ({len(missing)}): {missing[:3]}; "
+                "corpus changed, re-sample deliberately (see --sample) or restore the files"
+            )
+        picked = [by_name[name] for name in pinned]
+        return picked[:sample] if len(picked) > sample else picked
     if len(docs) <= sample:
         return docs
     step = len(docs) / sample
