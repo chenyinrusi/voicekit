@@ -30,6 +30,15 @@ def run_cli(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess:
     )
 
 
+def write_pack(dir_path: Path, **extra) -> Path:
+    """写一个最小包：只有 pack.json + profile.json。extra 用来加 corpus 等键。"""
+    (dir_path / "profile.json").write_text("{}", encoding="utf-8")
+    pack = {"schema": 1, "slug": "demo", "author": "示例作者", "profile": {"path": "profile.json"}}
+    pack.update(extra)
+    (dir_path / "pack.json").write_text(json.dumps(pack), encoding="utf-8")
+    return dir_path
+
+
 def test_all_core_modules_import():
     from voicekit.core import (  # noqa: F401
         build_profile,
@@ -80,6 +89,23 @@ def test_pack_loader_reads_synthetic_pack(tmp_path: Path):
     data = load_pack(tmp_path)
     assert data["slug"] == "demo"
     assert data["corpus"] == (tmp_path / "corpus").resolve()
+
+
+def test_pack_loader_allows_pack_without_corpus(tmp_path: Path):
+    """不提炼语料的包（只有基线 + profile）必须是合法包：lint/report 不需要 corpus。"""
+    from voicekit.core.pack_lib import load_pack
+
+    data = load_pack(write_pack(tmp_path))
+    assert data["corpus"] is None
+    assert data["profile"] == (tmp_path / "profile.json").resolve()
+
+
+def test_pack_loader_rejects_missing_declared_corpus(tmp_path: Path):
+    """声明了 corpus 但目录不在：仍要报错（防手误，不放松校验）。"""
+    from voicekit.core.pack_lib import PackError, load_pack
+
+    with pytest.raises(PackError, match="corpus"):
+        load_pack(write_pack(tmp_path, corpus={"path": "nope"}))
 
 
 def test_humanize_keeps_known_shapes():

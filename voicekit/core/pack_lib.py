@@ -2,6 +2,8 @@
 
 包布局见 `dev/fixes/FIX-352-author-pack-generic/DESIGN.md` §D1：
 `pack.json` 是唯一配置，里面的路径都相对包目录。
+必需项只有 `schema` / `slug` / `profile`；`corpus` 可选（只有 build 需要，且 build 走自己的
+`--corpus` 参数），见 `dev/fixes/voice-pack-manifest/DESIGN.md` D1。
 本模块只做路径解析与结构校验，不读写语料、不调模型。
 """
 
@@ -83,8 +85,10 @@ def load_pack(path: Path) -> dict:
     profile_meta = _section(data, "profile")
     exemplar_meta = _section(data, "exemplar")
     negatives_meta = _section(data, "negatives")
-    corpus = _resolve(root, _path_value(corpus_meta, "corpus", CORPUS_DIR), None)
-    if corpus is None or not corpus.is_dir():
+    corpus = _resolve(root, _path_value(corpus_meta, "corpus", None), None)
+    #: corpus 只有提炼（build）才用，且 build 自己收 --corpus；体检/报告/起稿不需要。
+    #: 声明了才校验，没声明就是 None —— 否则 CAS 这类「只发基线、不发语料」的包读不进来。
+    if corpus is not None and not corpus.is_dir():
         raise PackError(f"pack corpus directory missing: {corpus}")
     profile = _resolve(root, _path_value(profile_meta, "profile", PROFILE_FILE), None)
     exemplar = _resolve(root, _path_value(exemplar_meta, "exemplar", EXEMPLAR_FILE), None)

@@ -48,12 +48,14 @@ voicekit draft --material 材料.md --out 初稿.md
 
 ```
 voices/panchen-voice/
-  pack.json                 # schema / slug / author / 语料与 profile 的相对路径
+  pack.json                 # schema / slug / author / profile 的相对路径（corpus 可选）
   profile.json              # build 算出来的 42 条基线
-  corpus/*.md               # 语料，一篇一个文件
+  corpus/*.md               # 可选：语料，一篇一个文件；只有 build 需要，lint/report 不用
   judge_baseline.json       # 可选：判官基线
   exemplar_baseline.json    # 可选：样例基线
 ```
+
+只发基线、不发语料的包（比如产品里内置的作者包）是合法包：`pack.json` 里不写 `corpus` 即可。
 
 查找顺序：`--pack` → 环境变量 `VOICEKIT_PACK` → `./voices/*/pack.json`。
 

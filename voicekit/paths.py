@@ -1,4 +1,4 @@
-"""作者包路径约定：一个作者一个目录，包里有 pack.json / profile.json / corpus/。
+"""作者包路径约定：一个作者一个目录，包里有 pack.json / profile.json（corpus/ 可选）。
 
 查找顺序（`resolve_pack`）：
 1. 显式 `--pack`
