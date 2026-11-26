@@ -31,7 +31,7 @@ type 我的稿子.md | voicekit quick -          # 也能读管道
 
 # 1. 体检一篇稿子（0 元）
 voicekit lint 我的稿子.md --pack voices/panchen-voice
-voicekit lint 我的稿子.md --pack voices/panchen-voice --annotate   # 每条不过的，指到 ¶段 句N
+voicekit lint 我的稿子.md --pack voices/panchen-voice --annotate   # 能指到句的，给 ¶段 句N
 
 # 2. 一页 HTML 报告：结论 3 行 + 先改这三条 + 全部 42 条（0 元）
 voicekit report 我的稿子.md --pack voices/panchen-voice
@@ -62,9 +62,14 @@ voicekit judge 我的稿子.md --pack voices/panchen-voice
 
 `lint` 退出码看的是「像不像同一个人」（`0` 像 / `1` 不像 / `2` 读不了或太短，<200 汉字不给稳定分数），
 不是「有几条没过」；具体过没过看 `passed / total` 与 `--json` 的明细。
-`--annotate` 会在 `--json` 的每一行里加 `evidence` / `evidence_note`；`evidence_note` 长这样：
-`¶3 句2「……原句……」`，`¶` 是段号（按去掉标题/表格后的正文数），`句` 是这段里的第几句。
-全篇统计量的属性（句长分布、标点谱、句读节奏）会写 `无句级证据（全文统计）`，不硬指句子。
+`--annotate` 只给**不过的那几行**加证据：`--json` 里多 `evidence` / `evidence_note`（过的行不加），
+人类输出末尾多一段 `-- 句级证据（¶段 句N，只标位置，不判好坏）`。`evidence_note` 长这样：
+`¶3 句2「……原句……」`。`¶` 是清洗后正文的段号：空行分段，一行也算一段，
+H1 标题行、表格行也各占一个段号（和 `measure()` 数段同一套口径，不为报告另数一遍）；
+`句` 是这段里第几句。42 条里 21 条能指到句（19 条词表 + 碎片句 + 问句/感叹句），
+其余 21 条是全篇统计量（句长分布、标点谱、句读节奏、句尾模式、TTR 类），写
+`无句级证据（全文统计）`，不硬指句子。证据只标位置、不判好坏：指标偏低时它写
+「全文共 N 处」，意思是「全文就这几处」，不是说删掉这些句子。
 
 ## 作者包长什么样
 

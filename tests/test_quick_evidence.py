@@ -154,6 +154,28 @@ def test_quick_short_text_warns_but_still_prints(tmp_path: Path):
     done = run_cli("quick", str(path), cwd=tmp_path)
     assert done.returncode == 0
     assert "样本偏小" in done.stdout
+    assert "汉字" in done.stdout and "平均句长" in done.stdout, "提醒归提醒，数字照出"
+
+
+def test_quick_warns_on_record_like_file(tmp_path: Path):
+    """标题/表格/列表占满的文件，要说明它不全是正文，但仍然给数（rc=0）。"""
+    path = write_draft(
+        tmp_path / "rec.md",
+        "# 标题\n\n| 项目 | 值 |\n|---|---|\n| 一 | 二 |\n\n## 小标题\n\n- 列表一\n- 列表二\n",
+    )
+    done = run_cli("quick", str(path), cwd=tmp_path)
+    assert done.returncode == 0
+    assert "不是一篇正文" in done.stdout
+
+
+def test_quick_json_has_no_score_or_verdict(tmp_path: Path):
+    """JSON 顶层只许有实测字段，不许混进分数/结论/放行。"""
+    draft = write_draft(tmp_path / "draft.md")
+    data = json.loads(run_cli("quick", str(draft), "--json", cwd=tmp_path).stdout)
+    assert set(data) == {"path", "no_author_baseline", "diagnostic_only", "measurements", "warnings"}
+    flat = json.dumps(data, ensure_ascii=False)
+    for word in ("score", "verdict", "pass", "like"):
+        assert word not in flat, f"quick 的 JSON 里不该有 {word}"
 
 
 # ---------------------------------------------------------------------------
@@ -250,15 +272,74 @@ def test_lint_annotate_json_stays_parseable(tmp_path: Path):
     assert all("evidence_note" in r for r in failed)
 
 
+def test_lint_annotate_json_touches_only_failing_rows(tmp_path: Path):
+    """证据只挂在不过的行上；过的行不许被塞 `evidence`。"""
+    draft = write_draft(tmp_path / "draft.md")
+    pack = write_tiny_pack(tmp_path / "pack")
+    done = run_cli("lint", str(draft), "--pack", str(pack), "--annotate", "--json", cwd=tmp_path)
+    data = json.loads(done.stdout)
+    passed = [r for r in data["rows"] if r["ok"]]
+    failed = [r for r in data["rows"] if not r["ok"]]
+    assert passed and failed, "这是「一半过一半不过」的稿子，两种行都要有"
+    assert all("evidence" not in r and "evidence_note" not in r for r in passed)
+    assert all("evidence_note" in r for r in failed)
+
+
+def test_missing_pack_exits_2_not_1(tmp_path: Path):
+    """没作者包是环境问题：rc 必须是 2。rc 1 会被脚本读成「不像他」。"""
+    draft = write_draft(tmp_path / "draft.md")
+    for cmd in ("lint", "report", "judge"):
+        done = run_cli(cmd, str(draft), cwd=tmp_path)  # tmp_path 下没有 voices/
+        assert done.returncode == 2, f"{cmd} 没包时 rc={done.returncode}：{done.stderr}"
+        assert "no voice pack" in done.stderr or "[FAIL]" in done.stderr
+
+
 def test_report_shows_evidence_line(tmp_path: Path):
     from voicekit import report
+    from voicekit.core import voice_lib
 
     draft = write_draft(tmp_path / "draft.md")
     pack = write_tiny_pack(tmp_path / "pack")
+    # 加一条「读者称呼」：基线翻倍、容差 0，必定不过；稿子里有「我/你」，能指到句
+    raw = voice_lib.measure(DRAFT)["L7-05"]
+    profile = json.loads((pack / "profile.json").read_text(encoding="utf-8"))
+    profile["attributes"].append(
+        {
+            "attribute_id": "L7-05",
+            "attribute_name": "读者称呼",
+            "kind": "scalar",
+            "observed_value": float(raw) * 2,
+            "tolerance": {"rel": 0.0, "floor": 0.0},
+        }
+    )
+    (pack / "profile.json").write_text(json.dumps(profile, ensure_ascii=False), encoding="utf-8")
+
     page = Path(report.render(draft, pack, tmp_path / "out.html", "测试"))
     html = page.read_text(encoding="utf-8")
-    assert "¶" in html
-    assert "无句级证据" in html or "句级证据" in html
+    assert "句级证据（只标位置，不判好坏）：" in html, "指到句时要说清只标位置"
+    assert "¶" in html and "处：" in html, "要给段句位置，并写清全文共几处"
+    assert "句级证据：无句级证据" not in html, "别把「没有证据」写成一句结巴"
+
+
+def test_doc_level_row_says_no_evidence():
+    from voicekit.core import evidence
+
+    rows = [{"attribute_id": "L2-01", "ok": False}]
+    evidence.attach(rows, DRAFT)
+    assert rows[0]["evidence"] == []
+    assert rows[0]["evidence_note"] == "无句级证据（全文统计）"
+
+
+def test_evidence_note_counts_whole_document():
+    """低偏差时要能看出「全文就这几处」，不能只甩两句让人以为那就是全部。"""
+    from voicekit.core import evidence
+
+    rows = [{"attribute_id": "L2-08", "ok": False}]
+    evidence.attach(rows, DRAFT)
+    note = rows[0]["evidence_note"]
+    total = len(evidence.spots(DRAFT, "L2-08", limit=999))
+    assert total >= 1
+    assert f"共 {total} 处" in note or f"全文 {total} 处" in note
 
 
 def test_report_no_pack_flag_is_gone(tmp_path: Path):

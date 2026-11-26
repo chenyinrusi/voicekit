@@ -13,7 +13,8 @@ import re
 from pathlib import Path
 
 from .core import style_lint
-from .core.quick import share_non_prose
+from .core.evidence import NO_EVIDENCE
+from .core.quick import HAN_RE, share_non_prose
 
 CSS = """
 :root{--ink:#1c1a17;--dim:#6b6459;--line:#dfd8cc;--bg:#fbf9f4;--card:#fffdf8;--acc:#8a5a2b;--bad:#a4342a;--ok:#2f6b46}
@@ -56,7 +57,7 @@ button{font:inherit;font-size:.9rem;padding:.5rem 1rem;border:1px solid var(--ac
 
 
 def han_len(text: str) -> int:
-    return len(re.findall(r"[\u3400-\u9fff]", text))
+    return len(HAN_RE.findall(text))
 
 
 def humanize(detail: str) -> str:
@@ -128,7 +129,12 @@ def build(draft: Path, data: dict, title: str) -> str:
     )
     def ev_line(r: dict) -> str:
         note = r.get("evidence_note") or ""
-        return f'<div class="ev">句级证据：{e(note)}</div>' if note else ""
+        if not note:
+            return ""
+        if note == NO_EVIDENCE:
+            # 「句级证据：无句级证据」读起来像结巴，换个说法
+            return '<div class="ev">这项是全篇统计，指不到具体句子</div>'
+        return f'<div class="ev">句级证据（只标位置，不判好坏）：{e(note)}</div>'
 
     fix3_html = "".join(
         f'<div class="it"><div class="t">{i}. {e(r["attribute_name"])}'

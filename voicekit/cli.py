@@ -39,8 +39,22 @@ def _read_text(path: str) -> str:
     return Path(path).read_bytes().decode("utf-8-sig", "replace")
 
 
+class _MissingPack(Exception):
+    """`paths.resolve_pack` 用 SystemExit 表示「找不到作者包」；CLI 统一翻成 rc 2。
+
+    rc 1 在 `lint`/`judge` 里是「不像」，环境问题用 1 会让脚本误读。
+    """
+
+
+def _pack(pack: Path | None) -> Path:
+    try:
+        return paths.resolve_pack(pack)
+    except SystemExit as exc:
+        raise _MissingPack(str(exc)) from exc
+
+
 def _lint(args: argparse.Namespace) -> int:
-    pack = paths.resolve_pack(args.pack)
+    pack = _pack(args.pack)
     argv = ["--file", str(args.file)]
     argv += ["--pack", str(pack)]
     if args.json:
@@ -56,7 +70,7 @@ def _lint(args: argparse.Namespace) -> int:
 
 
 def _report(args: argparse.Namespace) -> int:
-    pack = paths.resolve_pack(args.pack)
+    pack = _pack(args.pack)
     page = report.render(args.file, pack, args.out, args.title)
     print(f"一页报告：{page}")
     return 0
@@ -115,13 +129,8 @@ def _draft(args: argparse.Namespace) -> int:
 def _judge(args: argparse.Namespace) -> int:
     from .core import release_gate
 
-    try:
-        pack = paths.resolve_pack(args.pack)
-    except SystemExit as exc:  # 找不到包是环境错，rc=2；rc=1 会被脚本读成「不像」
-        print(f"[FAIL] {exc}", file=sys.stderr)
-        return 2
     return release_gate.run(
-        args.file, pack, as_json=args.json, dry_run=args.dry_run
+        args.file, _pack(args.pack), as_json=args.json, dry_run=args.dry_run
     )
 
 
@@ -139,7 +148,7 @@ def build_parser() -> argparse.ArgumentParser:
     lint.add_argument("file", type=Path, help="要体检的稿子（.md/.txt）")
     lint.add_argument("--pack", type=Path, help="作者包目录（默认找 ./voices/）")
     lint.add_argument("--json", action="store_true", help="输出机器可读 JSON")
-    lint.add_argument("--annotate", action="store_true", help="不过的属性后面给出段落/句子位置")
+    lint.add_argument("--annotate", action="store_true", help="不过的属性里，能指到句的给出 ¶段 句N")
     lint.add_argument("--html", nargs="?", const=True, default=None, metavar="OUT",
                       help="同时生成一页 HTML 报告（可给输出路径）")
     lint.add_argument("--title", help="报告标题")
@@ -186,7 +195,11 @@ def main(argv: list[str] | None = None) -> int:
         except (AttributeError, ValueError):
             pass
     args = build_parser().parse_args(argv)
-    return int(args.func(args) or 0)
+    try:
+        return int(args.func(args) or 0)
+    except _MissingPack as exc:  # 环境问题一律 rc 2，别让脚本把「没包」读成「不像」
+        print(f"[FAIL] {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

@@ -7,10 +7,16 @@
 
 from __future__ import annotations
 
+import re
+
 from . import voice_lib as lib
 from .build_profile import MIN_CJK
 
-#: 低于这个汉字数，数字还在抖（与 `style_lint.LOW_CONFIDENCE_CJK` 同一口径）。
+#: 汉字口径和 `voicekit.report.han_len()` 一致（含扩展 A），否则同一个词两个模块判出两套数。
+HAN_RE = re.compile(r"[\u3400-\u9fff]")
+
+#: 低于这个汉字数，数字还在抖。这是 `voicekit build` 的抽样下限（`MIN_CJK`），
+#: 不是 `style_lint.LOW_CONFIDENCE_CJK`（那个是 500，管的是「分数先别信」）。
 WARN_CJK = MIN_CJK
 
 #: 非正文行占比超过它，就提醒「这份文件不全是正文」。
@@ -32,7 +38,7 @@ def share_non_prose(text: str) -> float:
         for ln in lines
         if ln.startswith(("#", "|", ">", "-", "*", "1.", "2.", "3."))
         or (ln.startswith("**") and ln.endswith("**"))
-        or len(lib.CJK_RE.findall(ln)) < 8
+        or len(HAN_RE.findall(ln)) < 8
     )
     return off / len(lines)
 

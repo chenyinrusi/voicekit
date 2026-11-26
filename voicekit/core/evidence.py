@@ -50,6 +50,12 @@ CJK_RE = lib.CJK_RE
 
 QUOTE_WIDTH = 32
 
+#: `attach()` 数「全文共几处」时的上限；够用即可，别为了数全把长稿扫爆。
+_COUNT = 999
+
+#: 全篇统计量没有句级证据时写这句；测试和报告都认这一个字符串。
+NO_EVIDENCE = "无句级证据（全文统计）"
+
 
 def sentences(text: str) -> list[dict]:
     """按清洗后的正文切句：`[{para, sent, text}]`，段号/句号都从 1 起。"""
@@ -77,7 +83,7 @@ def _quote(sentence: str, anchor: str, width: int = QUOTE_WIDTH) -> str:
 
 
 def _spot(para_no: int, sent_no: int, sentence: str, hit: str = "", label: str = "") -> dict:
-    """一个位置。`hit` 只给词表命中（`hit in quote` 必须成立）；句子特征放 `label`。"""
+    """一个位置。`hit` 给词表命中或句末标点（`hit in quote` 必须成立）；句子特征放 `label`。"""
     return {
         "para": para_no,
         "sent": sent_no,
@@ -111,9 +117,9 @@ def _struct_spots(parsed: list[dict], attr_id: str) -> list[dict]:
         for p in parsed:
             tail = p["text"][-1:] if p["text"] else ""
             if tail in "？?":
-                rows.append(_spot(p["para"], p["sent"], p["text"], label="问句"))
+                rows.append(_spot(p["para"], p["sent"], p["text"], hit=tail, label="问句"))
             elif tail in "！!":
-                rows.append(_spot(p["para"], p["sent"], p["text"], label="感叹句"))
+                rows.append(_spot(p["para"], p["sent"], p["text"], hit=tail, label="感叹句"))
     return rows
 
 
@@ -142,10 +148,19 @@ def describe(found: list[dict]) -> str:
 
 
 def attach(rows: list[dict], text: str, limit: int = 2) -> None:
-    """给不过的行补 `evidence` / `evidence_note`；过的行不动。"""
+    """给不过的行补 `evidence` / `evidence_note`；过的行不动。
+
+    说明里写「全文共几处」，这样指标偏低时也不会只剩两句被当成「该改的地方」。
+    """
     for row in rows:
         if row.get("ok"):
             continue
-        found = spots(text, row["attribute_id"], limit=limit)
+        found_all = spots(text, row["attribute_id"], limit=_COUNT)
+        found = found_all[:limit]
         row["evidence"] = found
-        row["evidence_note"] = describe(found) if found else "无句级证据（全文统计）"
+        if not found_all:
+            row["evidence_note"] = NO_EVIDENCE
+        elif len(found_all) <= limit:
+            row["evidence_note"] = f"全文 {len(found_all)} 处：{describe(found)}"
+        else:
+            row["evidence_note"] = f"全文共 {len(found_all)} 处，前 {limit} 处：{describe(found)}"
