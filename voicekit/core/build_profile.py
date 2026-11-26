@@ -31,11 +31,11 @@ from . import voice_lib as lib  # noqa: E402
 
 
 def _find_repo_root(start: Path) -> Path:
-    """向上找 pyproject.toml：兼容 scripts/voice/ 与 fix/proposed/scripts/voice/ 两种位置。"""
+    """向上找 pyproject.toml；装进 site-packages 后没有仓库根，退回包目录（路径只在没给 --pack 时兜底）。"""
     for parent in [start, *start.parents]:
         if (parent / "pyproject.toml").is_file():
             return parent
-    raise SystemExit(f"cannot locate repo root (pyproject.toml) above {start}")
+    return start.parent
 
 
 REPO_ROOT = _find_repo_root(Path(__file__).resolve().parent)
