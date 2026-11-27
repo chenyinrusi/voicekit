@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import locale
 import os
 import sys
 from pathlib import Path
@@ -34,10 +35,15 @@ def _quick(args: argparse.Namespace) -> int:
 
 
 def _read_text(path: str) -> str:
-    """`-` 读 stdin。Windows 管道默认 cp1252，所以先收字节再自己按 UTF-8 解。"""
-    if path == "-":
-        return sys.stdin.buffer.read().decode("utf-8-sig", "replace")
-    return Path(path).read_bytes().decode("utf-8-sig", "replace")
+    """`-` 读 stdin。管道可能是 UTF-8，也可能是 Windows 中文控制台（`type x |`）的 GBK：
+    先按 UTF-8 解，失败再按 GB18030（GBK 超集）解，最后一档才用本机编码并 replace。"""
+    raw = sys.stdin.buffer.read() if path == "-" else Path(path).read_bytes()
+    for encoding in ("utf-8-sig", "gb18030"):
+        try:
+            return raw.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode(locale.getpreferredencoding(False) or "utf-8", "replace")
 
 
 class _MissingPack(Exception):
