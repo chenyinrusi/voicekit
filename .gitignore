@@ -11,3 +11,4 @@ tmp-*
 voices/
 /tmp-*-report.html
 *.report.html
+/logs/

@@ -162,7 +162,7 @@ def build_parser() -> argparse.ArgumentParser:
             "1 = 判得了但不像（draft 时是「稿子有事实问题」）；"
             "2 = 没跑成（缺包、文件读不动、稿太短、没 key）。\n"
             "看钱：真调模型时每次追加一行到 $VOICEKIT_USAGE_LOG"
-            "（默认 ~/.cache/voicekit/usage.jsonl；设空串 = 不记）。\n"
+            "（默认 <当前项目>/logs/voicekit_usage.jsonl；项目外才落 ~/.cache/voicekit；设空串 = 不记）。\n"
             "判定缓存：$VOICEKIT_JUDGE_CACHE（默认 ~/.cache/voicekit/judge），"
             "只存判定结果，不存稿件正文。\n"
             "默认作者包：$VOICEKIT_PACK 或 ./voices/<slug>。"

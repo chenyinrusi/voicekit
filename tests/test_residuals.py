@@ -272,3 +272,31 @@ def test_draft_help_does_not_show_main_py(tmp_path: Path):
     assert done.returncode == 0
     assert "__main__.py" not in out, out
     assert "voicekit draft" in out
+
+
+def test_ledger_defaults_into_project_logs(tmp_path: Path, monkeypatch):
+    """账本别落到用户家目录（C:）里：在项目里跑就写项目的 logs/。"""
+    from voicekit import usage_log
+
+    monkeypatch.delenv("VOICEKIT_USAGE_LOG", raising=False)
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    (repo / "sub").mkdir()
+    monkeypatch.chdir(repo / "sub")
+
+    assert usage_log.log_path() == repo / "logs" / "voicekit_usage.jsonl"
+
+    landed = usage_log.record({"model": "deepseek-flash", "prompt_tokens": 10, "completion_tokens": 2})
+    assert landed == repo / "logs" / "voicekit_usage.jsonl"
+    rows = [json.loads(line) for line in landed.read_text(encoding="utf-8").splitlines()]
+    assert len(rows) == 1 and rows[0]["prompt_tokens"] == 10
+
+
+def test_ledger_outside_project_uses_home_cache(tmp_path: Path, monkeypatch):
+    """不在任何项目里跑（没有 .git）才回落到家目录缓存。"""
+    from voicekit import usage_log
+
+    monkeypatch.delenv("VOICEKIT_USAGE_LOG", raising=False)
+    monkeypatch.chdir(tmp_path)  # pytest 的 tmp 在系统临时目录下，祖先没有 .git
+
+    assert usage_log.log_path() == Path.home() / ".cache" / "voicekit" / "voicekit_usage.jsonl"

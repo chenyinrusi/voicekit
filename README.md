@@ -64,7 +64,7 @@ voicekit judge 我的稿子.md --pack voices/panchen-voice
 判定缓存默认放 `~/.cache/voicekit/judge`，可用 `VOICEKIT_JUDGE_CACHE` 改；同一稿同一基线命中缓存不花钱。
 缓存只存判定结果（按提示词 sha256 命名），不存稿件正文；`--no-cache` 可强制重判。
 模型输出不能用时会自动再判一次，并打印 `[retry 1/1]`；重试也算 token，`--retries 0` 可关掉（默认 1）。
-真跑一次就追加一行用量到 `~/.cache/voicekit/usage.jsonl`，可用 `VOICEKIT_USAGE_LOG` 改路径（设空串 = 不记）。
+真跑一次就追加一行用量到 `<当前项目>/logs/voicekit_usage.jsonl`（往上找最近带 `.git` 的目录；不在项目里跑才落 `~/.cache/voicekit/usage.jsonl`），可用 `VOICEKIT_USAGE_LOG` 改路径（设空串 = 不记）。
 起稿也记同一本账；账本写不进去只警告，不影响结论。
 
 `draft` 退出码：`0` 写了 / `1` 事实有问题 / `2` 缺包、读不了、参数错。

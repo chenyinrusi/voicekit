@@ -1,8 +1,9 @@
 """本机花费台账：每次真调模型追加一行 JSONL。
 
 为什么要有它：装成 wheel 后命令跑在别人的机器上，CAS 的花费账本看不到这些调用。
-台账只记用量与钱，不记稿件正文；默认落在 `~/.cache/voicekit/usage.jsonl`，
-用 `VOICEKIT_USAGE_LOG` 改路径；显式设空串 = 关掉。
+台账只记用量与钱，不记稿件正文。默认落在**当前项目**的 `logs/voicekit_usage.jsonl`
+（往上找最近带 `.git` 的目录；CAS 与 voicekit 两个仓都适用），不在项目里跑才落
+`~/.cache/voicekit/usage.jsonl`。用 `VOICEKIT_USAGE_LOG` 改路径；显式设空串 = 关掉。
 
 写失败只警告、不中断：台账不是判定的前提。追加时加锁（同一台机多进程并发跑也不撕行）。
 """
@@ -26,6 +27,15 @@ PRICE_PER_M: dict[str, tuple[float, float]] = {
 }
 
 ENV = "VOICEKIT_USAGE_LOG"
+NAME = "voicekit_usage.jsonl"
+
+
+def _repo_root(start: Path) -> Path | None:
+    """最近的带 .git 的祖先目录；没有就是没在项目里跑。"""
+    for directory in (start, *start.parents):
+        if (directory / ".git").exists():
+            return directory
+    return None
 
 
 def log_path() -> Path | None:
@@ -33,7 +43,10 @@ def log_path() -> Path | None:
     raw = os.environ.get(ENV)
     if raw is not None:
         return Path(raw) if raw.strip() else None
-    return Path.home() / ".cache" / "voicekit" / "usage.jsonl"
+    root = _repo_root(Path.cwd())
+    if root is not None:
+        return root / "logs" / NAME
+    return Path.home() / ".cache" / "voicekit" / NAME
 
 
 def cost_usd(model: str, usage: dict | None) -> float | None:
