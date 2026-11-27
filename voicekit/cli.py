@@ -93,7 +93,16 @@ def _build(args: argparse.Namespace) -> int:
     argv += ["--check"] if args.check else []
     rc = build_profile.main(argv)
     if rc == 0 and not args.check:
-        _write_pack_json(out, args.slug, args.author, args.corpus)
+        try:
+            _write_pack_json(out, args.slug, args.author, args.corpus)
+        except ValueError:
+            # 跨盘（E: 语料、C: 包目录）时 Windows 算不出相对路径，别甩 traceback。
+            print(
+                f"包目录已写到 {out}，但语料和包不在同一个盘，写不出可搬走的相对路径。\n"
+                f"换成：把语料放进包目录里，或让 --out 和语料在同一个盘。\n"
+                f"（profile.json 已生成；补好 corpus 后手写 pack.json 也能用）"
+            )
+            return 2
     return rc
 
 
@@ -149,8 +158,9 @@ def build_parser() -> argparse.ArgumentParser:
         prog="voicekit",
         description="提炼一个人的文风，体检一篇稿子，按他的腔起稿。",
         epilog=(
-            "退出码（rc）：0 = 判得了且像（同人）/ 跑成功；"
-            "1 = 判得了但不像；2 = 判不了（缺包、文件读不动、稿太短、没 key）。\n"
+            "退出码（rc）：0 = 跑成功（judge 时是「判得了且像」）；"
+            "1 = 判得了但不像（draft 时是「稿子有事实问题」）；"
+            "2 = 没跑成（缺包、文件读不动、稿太短、没 key）。\n"
             "看钱：真调模型时每次追加一行到 $VOICEKIT_USAGE_LOG"
             "（默认 ~/.cache/voicekit/usage.jsonl；设空串 = 不记）。\n"
             "判定缓存：$VOICEKIT_JUDGE_CACHE（默认 ~/.cache/voicekit/judge），"

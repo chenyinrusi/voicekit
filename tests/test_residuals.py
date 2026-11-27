@@ -123,6 +123,106 @@ def test_judge_failure_still_logs_spent_tokens(tmp_path: Path, monkeypatch):
     assert rc == 2, "\n".join(lines)
     rows = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
     assert rows and rows[0]["cost_usd"] and rows[0]["cost_usd"] > 0
+    # 同一次跑只记一行：重试的花费并进同一行，不能记成两笔。
+    assert len(rows) == 1, rows
+
+
+def test_build_cross_drive_is_rc2_not_traceback(tmp_path: Path, monkeypatch, capsys):
+    """语料在 E:、包目录在 C:：Windows 算不出相对路径，要给人话 + rc 2，不能甩 traceback。"""
+    from voicekit import cli
+    from voicekit.core import build_profile
+
+    monkeypatch.setattr(build_profile, "main", lambda argv: 0)
+
+    def boom(pack_dir, slug, author, corpus):
+        raise ValueError("path is on mount 'E:', start on mount 'C:'")
+
+    monkeypatch.setattr(cli, "_write_pack_json", boom)
+    args = type(
+        "A",
+        (),
+        {"out": str(tmp_path / "pack"), "corpus": str(tmp_path), "slug": "demo",
+         "author": "demo", "check": False},
+    )()
+    rc = cli._build(args)
+    out = capsys.readouterr().out
+    assert rc == 2
+    assert "同一个盘" in out, out
+    assert "Traceback" not in out
+
+
+def test_drive_relative_corpus_is_rejected(tmp_path: Path):
+    """`C:corpus` 不是绝对路径也不是抄得走的相对路径：能解析到包外，必须拒。"""
+    from voicekit.core import pack_lib as pk
+
+    pack = write_exemplar_pack(tmp_path / "pack")
+    data = json.loads((pack / "pack.json").read_text(encoding="utf-8"))
+    data["corpus"] = {"path": "C:corpus"}
+    (pack / "pack.json").write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(pk.PackError, match="相对"):
+        pk.load_pack(pack)
+
+
+def test_negative_retries_still_calls_model_once(tmp_path: Path, monkeypatch):
+    """`--retries -1` 不能变成「一次都不调」：最少也要判一次。"""
+    from voicekit.core import exemplar_judge as ej
+
+    monkeypatch.setenv("VOICEKIT_JUDGE_CACHE", str(tmp_path / "cache"))
+    pack = write_exemplar_pack(tmp_path / "pack")
+    set_obj = json.loads((pack / "exemplar_baseline.json").read_text(encoding="utf-8"))
+    draft = write_draft(tmp_path).read_text(encoding="utf-8")
+    fake = _FakeJudgeLLM('{"verdict": "same", "reason": "笔性像"}')
+    import asyncio
+
+    payload = asyncio.run(
+        ej.judge_text(
+            draft, set_obj, fake, "deepseek-chat", corpus=pack / "corpus", retries=-1
+        )
+    )
+    assert fake.calls == 1
+    assert payload["attempts"] == 1
+
+
+def test_cached_judge_run_does_not_claim_ledger(tmp_path: Path, monkeypatch):
+    """第二次跑命中缓存：0 元、不写台账，屏幕也不能说「用量已记到」。"""
+    from voicekit.core import release_gate
+
+    log = tmp_path / "usage.jsonl"
+    monkeypatch.setenv("VOICEKIT_USAGE_LOG", str(log))
+    monkeypatch.setenv("VOICEKIT_JUDGE_CACHE", str(tmp_path / "cache"))
+    pack = write_exemplar_pack(tmp_path / "pack")
+    draft = write_draft(tmp_path)
+    fake = _FakeJudgeLLM('{"verdict": "same", "reason": "笔性像"}')
+    factory = lambda provider, model: fake  # noqa: E731
+    assert release_gate.run(draft, pack, llm_factory=factory, echo=lambda _l: None) == 0
+    lines: list[str] = []
+    assert release_gate.run(draft, pack, llm_factory=factory, echo=lines.append) == 0
+    text = "\n".join(lines)
+    assert "不写用量台账" in text, text
+    assert "用量已记到" not in text, text
+    assert len(log.read_text(encoding="utf-8").splitlines()) == 1
+
+
+def test_usage_log_survives_concurrent_writers(tmp_path: Path, monkeypatch):
+    """多进程同时记账不能互相覆盖：一行都不能少、不能坏。"""
+    import subprocess
+
+    log = tmp_path / "usage.jsonl"
+    code = (
+        "import sys; from voicekit import usage_log\n"
+        "for i in range(50): usage_log.record({'command': 'judge', 'i': i})\n"
+    )
+    env = dict(__import__("os").environ)
+    env.update(VOICEKIT_USAGE_LOG=str(log), PYTHONIOENCODING="utf-8", PYTHONPATH=str(ROOT))
+    procs = [
+        subprocess.Popen([sys.executable, "-c", code], env=env, cwd=str(ROOT))
+        for _ in range(4)
+    ]
+    assert [p.wait(timeout=120) for p in procs] == [0, 0, 0, 0]
+    lines = log.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 200, len(lines)
+    for line in lines:
+        json.loads(line)  # 坏一行就抛
 
 
 def test_pack_rejects_absolute_corpus(tmp_path: Path):

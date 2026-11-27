@@ -86,10 +86,12 @@ def load_pack(path: Path) -> dict:
     exemplar_meta = _section(data, "exemplar")
     negatives_meta = _section(data, "negatives")
     corpus_value = _path_value(corpus_meta, "corpus", None)
-    if corpus_value is not None and Path(corpus_value).is_absolute():
-        # 绝对路径换台机器就断；包要能拷走。
+    if corpus_value is not None and (
+        Path(corpus_value).is_absolute() or Path(corpus_value).drive
+    ):
+        # 绝对路径换台机器就断；包要能拷走。`C:corpus` 这种 drive-relative 也一样，不算相对路径。
         raise PackError(
-            f"pack.json corpus.path 要用相对包目录的路径（现在是绝对路径 {corpus_value}）："
+            f"pack.json corpus.path 要用相对包目录的路径（现在是 {corpus_value}）："
             "包拷到别的机器就找不到语料了"
         )
     corpus = _resolve(root, corpus_value, None)

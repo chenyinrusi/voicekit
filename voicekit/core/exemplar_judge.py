@@ -623,6 +623,7 @@ async def judge_text(
     draft = clean_body(text)
     if lib.cjk_count(draft) == 0:
         raise jl.JudgeError("draft has no CJK text")
+    retries = max(0, min(int(retries), 5))  # 负数是 0 次调用，太大是烧钱；夹到 0..5
     key = cache_key(draft, model, str(set_obj.get("set_sha256")))
     if use_cache:
         cached = read_cache(key)

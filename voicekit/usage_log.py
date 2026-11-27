@@ -4,7 +4,7 @@
 台账只记用量与钱，不记稿件正文；默认落在 `~/.cache/voicekit/usage.jsonl`，
 用 `VOICEKIT_USAGE_LOG` 改路径；显式设空串 = 关掉。
 
-写失败只警告、不中断：台账不是判定的前提。
+写失败只警告、不中断：台账不是判定的前提。追加时加锁（同一台机多进程并发跑也不撕行）。
 """
 
 from __future__ import annotations
@@ -16,9 +16,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 #: USD per 1M tokens (input, output)。源：CAS `src/config/llm_models.toml`
-#: `[pricing_v2."deepseek-chat"]`（0.14 / 0.28，2026-08-03，状态 deprecated）。
-#: 不认识模型就不算钱（cost_usd = null），不猜 0。
-PRICE_PER_M: dict[str, tuple[float, float]] = {"deepseek-chat": (0.14, 0.28)}
+#: [pricing_v2.*]（取值日期 2026-11-27）。不认识模型就不算钱（cost_usd = null），不猜 0。
+#: 缓存读折扣不在这里算：usage 只有 prompt/completion，台账一律按「未命中缓存」的上限估。
+PRICE_PER_M: dict[str, tuple[float, float]] = {
+    "deepseek-flash": (0.3, 1.2),  # effective 2026-09-10，CAS 现默认模型
+    "deepseek-v4-pro": (1.32, 3.96),  # effective 2026-08-17，工作日高峰价
+    "deepseek-chat": (0.14, 0.28),  # deprecated 2026-08-03，历史追溯用
+    "deepseek-v4-flash": (0.14, 0.28),  # deprecated 2026-08-03
+}
 
 ENV = "VOICEKIT_USAGE_LOG"
 
@@ -42,6 +47,30 @@ def cost_usd(model: str, usage: dict | None) -> float | None:
     return (prompt * price[0] + completion * price[1]) / 1_000_000
 
 
+def _append_locked(path: Path, line: str) -> None:
+    """加锁追加一行：四五个进程同时跑 judge 时不能互相覆盖（丢账就是丢钱）。"""
+    with path.open("a", encoding="utf-8") as handle:
+        handle.seek(0)  # 拿第一字节当互斥锁，位置固定，解锁才对得上
+        if os.name == "nt":
+            import msvcrt
+
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            handle.seek(0, os.SEEK_END)
+            handle.write(line)
+            handle.flush()
+        finally:
+            handle.seek(0)
+            if os.name == "nt":
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
 def record(entry: dict) -> Path | None:
     """追加一行；返回落地路径。写不进去只警告（判定已经做完，不能因此报错）。"""
     path = log_path()
@@ -50,9 +79,9 @@ def record(entry: dict) -> Path | None:
     row = {"ts": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"), **entry}
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
-    except OSError as exc:
+        _append_locked(path, json.dumps(row, ensure_ascii=False) + "\n")
+    except (OSError, TypeError, ValueError) as exc:
+        # TypeError/ValueError：钱已经花了，别在这里把命令打崩。
         print(f"[warn] 花费台账写不进去（不影响本次结论）：{path}：{exc}", file=sys.stderr)
         return None
     return path

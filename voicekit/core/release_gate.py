@@ -311,7 +311,7 @@ def run(
             }
         )
     else:
-        ledger = usage_log.log_path()
+        ledger = None  # 命中缓存没花钱，别声称「已记到」
 
     say(f"判定：{verdict}（judge {combined['verdict']}；模型原话 {answer}）")
     say(f"样例 {exemplar_count} 篇；基线指纹 {_short(set_obj.get('set_sha256'))}；模型 {actual}")
@@ -324,6 +324,8 @@ def run(
         say(f"这次模型调用了 {attempts} 次（第一次输出不能用，重试也算了 token）")
     if ledger is not None:
         say(f"用量已记到 {ledger}")
+    elif cached:
+        say("命中缓存：这次不花钱，也不写用量台账")
     say(f"理由：{judge.get('reason')}")
     cues = judge.get("cues") or []
     if cues:
