@@ -235,6 +235,32 @@ def test_spot_paragraph_numbers_follow_cleaned_body():
     assert found and found[0]["para"] == 2, f"段号应指向清洗后的第 2 段，实际 {found}"
 
 
+#: 平台注入很多的稿子：3 行头（Title/URL/本文首发于）+ 重复标题 + 行内平台短语。
+NOISY = (
+    "Title: 平台标题\n"
+    "URL Source: https://example.com/x\n"
+    "本文首发于某某公众号\n"
+    "同一行标题\n\n"
+    "同一行标题\n\n"
+    "第一段第一句。第二句这里有个问号吗？第三句。\n"
+    "第二段（图源网络）只有一句。\n"
+)
+
+
+def test_spot_paragraph_numbers_skip_platform_noise():
+    """平台注入行与重复标题不占段号：不剥的话 ¶ 会整体后移 4 段。"""
+    from voicekit.core import evidence, voice_lib
+
+    doc = voice_lib.measure(NOISY)["_doc"]
+    found = evidence.spots(NOISY, "L2-05")
+    assert found, "问句应被找到"
+    spot = found[0]
+    assert (spot["para"], spot["sent"]) == (2, 2), f"应指向清洗后 ¶2 句2，实际 {spot}"
+    assert "问号" in spot["quote"] and spot["hit"] == "？", spot
+    assert doc["paragraphs"] == 3, f"measure 报的段数应是 3，实际 {doc['paragraphs']}"
+    assert evidence.spots(NOISY, "L1-01") == [], "全篇统计量（标点谱）不许给位置"
+
+
 def test_spot_numbers_stable_across_line_endings():
     from voicekit.core import evidence
 
