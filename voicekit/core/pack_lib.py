@@ -85,7 +85,14 @@ def load_pack(path: Path) -> dict:
     profile_meta = _section(data, "profile")
     exemplar_meta = _section(data, "exemplar")
     negatives_meta = _section(data, "negatives")
-    corpus = _resolve(root, _path_value(corpus_meta, "corpus", None), None)
+    corpus_value = _path_value(corpus_meta, "corpus", None)
+    if corpus_value is not None and Path(corpus_value).is_absolute():
+        # 绝对路径换台机器就断；包要能拷走。
+        raise PackError(
+            f"pack.json corpus.path 要用相对包目录的路径（现在是绝对路径 {corpus_value}）："
+            "包拷到别的机器就找不到语料了"
+        )
+    corpus = _resolve(root, corpus_value, None)
     #: corpus 只有提炼（build）和读原文的命令（judge / eval）才用；体检/报告/起稿不需要。
     #: 声明了才校验，没声明就是 None —— 否则 CAS 这类「只发基线、不发语料」的包读不进来。
     if corpus is not None and not corpus.is_dir():

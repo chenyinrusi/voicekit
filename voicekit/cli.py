@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -103,7 +104,8 @@ def _write_pack_json(pack_dir: Path, slug: str, author: str, corpus: Path) -> No
         corpus_rel = corpus_path.relative_to(pack_dir.resolve())
         corpus_value = corpus_rel.as_posix()
     except ValueError:
-        corpus_value = str(corpus_path)
+        # 语料不在包目录里：写相对路径（可带 ..），绝对路径换机器就断。
+        corpus_value = Path(os.path.relpath(corpus_path, pack_dir.resolve())).as_posix()
     data = {
         "schema": 1,
         "slug": slug,
@@ -133,12 +135,30 @@ def _judge(args: argparse.Namespace) -> int:
     from .core import release_gate
 
     return release_gate.run(
-        args.file, _pack(args.pack), as_json=args.json, dry_run=args.dry_run
+        args.file,
+        _pack(args.pack),
+        as_json=args.json,
+        dry_run=args.dry_run,
+        retries=args.retries,
+        use_cache=not args.no_cache,
     )
 
 
 def build_parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(prog="voicekit", description="提炼一个人的文风，体检一篇稿子，按他的腔起稿。")
+    ap = argparse.ArgumentParser(
+        prog="voicekit",
+        description="提炼一个人的文风，体检一篇稿子，按他的腔起稿。",
+        epilog=(
+            "退出码（rc）：0 = 判得了且像（同人）/ 跑成功；"
+            "1 = 判得了但不像；2 = 判不了（缺包、文件读不动、稿太短、没 key）。\n"
+            "看钱：真调模型时每次追加一行到 $VOICEKIT_USAGE_LOG"
+            "（默认 ~/.cache/voicekit/usage.jsonl；设空串 = 不记）。\n"
+            "判定缓存：$VOICEKIT_JUDGE_CACHE（默认 ~/.cache/voicekit/judge），"
+            "只存判定结果，不存稿件正文。\n"
+            "默认作者包：$VOICEKIT_PACK 或 ./voices/<slug>。"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     ap.add_argument("--version", action="version", version=f"voicekit {__version__}")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
@@ -187,6 +207,9 @@ def build_parser() -> argparse.ArgumentParser:
     jd.add_argument("--pack", type=Path, help="作者包目录（默认找 ./voices/）")
     jd.add_argument("--json", action="store_true", help="输出机器可读 JSON")
     jd.add_argument("--dry-run", action="store_true", help="0 元：只打印提示词规模，不调模型")
+    jd.add_argument("--retries", type=int, default=1, metavar="N",
+                    help="模型输出不能用时再判几次（默认 1；每次重试都花 token，0 = 不重试）")
+    jd.add_argument("--no-cache", action="store_true", help="不读也不写判定缓存（强制重新判）")
     jd.set_defaults(func=_judge)
     return ap
 

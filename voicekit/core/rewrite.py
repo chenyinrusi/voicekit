@@ -669,6 +669,10 @@ def _llm_callable(provider: str, model: str | None, temperature: float, timeout:
             response = await asyncio.wait_for(
                 llm.chat(built, temperature=temperature), timeout=timeout
             )
+            usage = getattr(response, "usage", None) or {}
+            for name, value in usage.items():
+                if isinstance(value, int):
+                    counter[name] = counter.get(name, 0) + value
             return _text_of(response)
         finally:
             await release_llm_client(llm)
@@ -676,6 +680,10 @@ def _llm_callable(provider: str, model: str | None, temperature: float, timeout:
     def call(messages: list[dict]) -> str:
         return asyncio.run(_run(messages))
 
+    counter: dict = {}
+    call.usage = counter
+    call.model = model or DEFAULT_MODEL
+    call.provider = provider
     return call
 
 

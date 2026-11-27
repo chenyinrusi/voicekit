@@ -585,11 +585,15 @@ def read_cache(key: str) -> dict | None:
 
 
 def write_cache(key: str, payload: dict) -> None:
+    """缓存写不进去（只读安装、满盘）只警告：判定已经花了钱，不能把结论一起丢掉。"""
     path = jl.cache_dir() / f"exemplar-{key}.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
-    os.replace(tmp, path)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError as exc:
+        print(f"[warn] 判定缓存写不进去（不影响本次结论）：{path}：{exc}", file=sys.stderr)
 
 
 async def _call_llm(llm, messages, timeout: float) -> tuple[str, dict]:
@@ -615,7 +619,7 @@ async def judge_text(
     timeout: float = 120.0,
     retries: int = 1,
 ) -> dict:
-    """判一篇稿。返回 {verdict, reason, cues, model, usage, cached}。"""
+    """判一篇稿。返回 {verdict, reason, cues, model, usage, cached, attempts}。"""
     draft = clean_body(text)
     if lib.cjk_count(draft) == 0:
         raise jl.JudgeError("draft has no CJK text")
@@ -623,15 +627,22 @@ async def judge_text(
     if use_cache:
         cached = read_cache(key)
         if cached is not None:
-            return {**cached, "cached": True, "model": model}
+            return {**cached, "cached": True, "model": model, "attempts": 0}
     exemplars = exemplar_texts(set_obj, corpus)
     usage_total: dict = {}
     last_raw = ""
     last_error: Exception | None = None
     parsed: dict | None = None
+    attempts = 0
     for attempt in range(retries + 1):
         messages = build_messages(exemplars, draft)
         if attempt:
+            # 重试是花钱的：说清第几次、为什么，别让用户只看到账单变大。
+            print(
+                f"[retry {attempt}/{retries}] 上一轮输出不能用（{last_error}），再判一次"
+                "（这次也算 token）",
+                file=sys.stderr,
+            )
             from ..compat import Message
 
             messages = messages + [
@@ -642,6 +653,7 @@ async def judge_text(
                 ),
             ]
         try:
+            attempts += 1
             raw, usage = await _call_llm(llm, messages, timeout)
         except jl.JudgeError as exc:
             last_error = exc
@@ -658,10 +670,20 @@ async def judge_text(
         last_error = None
         break
     if parsed is None:
-        raise jl.JudgeError(
+        error = jl.JudgeError(
             f"model output unusable: {last_error} | raw: {last_raw[:300]!r}"
         )
-    payload = {**parsed, "model": model, "usage": usage_total, "cached": False}
+        # 花掉的 token 要能进台账：把用量挂在异常上，由调用方记。
+        error.usage = usage_total
+        error.attempts = attempts
+        raise error
+    payload = {
+        **parsed,
+        "model": model,
+        "usage": usage_total,
+        "cached": False,
+        "attempts": attempts,
+    }
     if use_cache:
         # usage 一起缓存：命中时下游看到的不是 0 token，而是首判的真实用量。
         write_cache(key, {k: payload[k] for k in ("verdict", "reason", "cues", "usage")})
@@ -888,13 +910,23 @@ def judge_file(args) -> int:
                     "or exemplar_judge.py --eval --write (panchen)"
                 )
             pack = pk.load_pack(Path(args.pack)) if getattr(args, "pack", None) else None
-            problems = verify_set(set_obj, Path(args.corpus), pack=pack)
+            # 钉死集的名单要读包里的基线；只给 pack 不给基线，wheel 里会报「缺基线」。
+            pack_baseline = (
+                Path(pack["baseline"])
+                if pack and Path(pack["baseline"]).is_file()
+                else None
+            )
+            problems = verify_set(
+                set_obj, Path(args.corpus), pack=pack, baseline=pack_baseline
+            )
             if problems:
                 raise jl.JudgeError("exemplar set unusable: " + "; ".join(problems))
             bound = check_set_bound_pack(set_obj, pack)
             if bound:
                 raise jl.JudgeError(bound)
-            incompatible = check_set_compatible(set_obj, model)
+            incompatible = check_set_compatible(
+                set_obj, model, baseline=pack_baseline
+            )
             if incompatible:
                 raise jl.JudgeError(incompatible)
             payload = await judge_text(

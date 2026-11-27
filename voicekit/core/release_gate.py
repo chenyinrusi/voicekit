@@ -17,12 +17,11 @@ from pathlib import Path
 from . import exemplar_judge as ej
 from . import judge_lib as jl
 from . import pack_lib as pk
+from .. import usage_log
 from .exemplar_inputs import clean_body
 
-#: USD per 1M tokens (input, output)。源：CAS `src/config/llm_models.toml`
-#: `[pricing_v2."deepseek-chat"]`（0.14 / 0.28，2026-08-03，状态 deprecated）。
-#: 不认识模型就不算钱（cost_usd = null），不猜 0。
-PRICE_PER_M: dict[str, tuple[float, float]] = {"deepseek-chat": (0.14, 0.28)}
+#: USD per 1M tokens (input, output)。单价表与账本在 usage_log 里，这里保留旧名字给调用方。
+PRICE_PER_M: dict[str, tuple[float, float]] = usage_log.PRICE_PER_M
 
 #: 中文粗估：1 token ≈ 1.5 字符。只给 --dry-run 说规模，真跑以返回 usage 为准。
 CHARS_PER_TOKEN = 1.5
@@ -79,6 +78,8 @@ def run(
     as_json: bool = False,
     dry_run: bool = False,
     timeout: float = 120.0,
+    retries: int = 1,
+    use_cache: bool = True,
     llm_factory=None,
     echo=print,
 ) -> int:
@@ -235,7 +236,14 @@ def run(
             if mismatch:
                 raise jl.JudgeError(mismatch)
             payload = await ej.judge_text(
-                text, set_obj, llm, actual, corpus=corpus, timeout=timeout
+                text,
+                set_obj,
+                llm,
+                actual,
+                corpus=corpus,
+                timeout=timeout,
+                retries=retries,
+                use_cache=use_cache,
             )
             return payload, actual
         finally:
@@ -244,6 +252,22 @@ def run(
     try:
         payload, actual = asyncio.run(_judge())
     except jl.JudgeError as exc:
+        # 模型输出一直不能用：钱已经花了，用量挂在异常上，先记账再报 rc 2。
+        usage = getattr(exc, "usage", None) or {}
+        if usage:
+            usage_log.record(
+                {
+                    "command": "judge",
+                    "file": str(path),
+                    "pack": str(pack_path),
+                    "model": model,
+                    "verdict": "failed",
+                    "prompt_tokens": int(usage.get("prompt_tokens") or 0),
+                    "completion_tokens": int(usage.get("completion_tokens") or 0),
+                    "cost_usd": usage_log.cost_usd(model, usage),
+                    "attempts": int(getattr(exc, "attempts", 0) or 0),
+                }
+            )
         return fail(str(exc))
     except SystemExit as exc:  # compat 缺 key / HTTP 错：抬成 rc=2，别让脚本当成 1
         return fail(str(exc) or "LLM 调用失败")
@@ -260,16 +284,34 @@ def run(
     usage = judge.get("usage") or {}
     prompt_tokens = int(usage.get("prompt_tokens") or 0)
     completion_tokens = int(usage.get("completion_tokens") or 0)
-    price = PRICE_PER_M.get(actual)
+    attempts = int(payload.get("attempts") or 0)
     if cached:
         cost: float | None = 0.0
         cost_note = "命中缓存，本次 0 元（tokens 是首次判定的用量）"
-    elif price is None:
-        cost = None
-        cost_note = "这个模型没有价目，未计费（cost_usd = null）"
     else:
-        cost = (prompt_tokens * price[0] + completion_tokens * price[1]) / 1_000_000
-        cost_note = "上限估算，未按缓存命中价打折"
+        cost = usage_log.cost_usd(actual, usage)
+        cost_note = (
+            "上限估算，未按缓存命中价打折"
+            if cost is not None
+            else "这个模型没有价目，未计费（cost_usd = null）"
+        )
+
+    if not cached:
+        ledger = usage_log.record(
+            {
+                "command": "judge",
+                "file": str(path),
+                "pack": str(pack_path),
+                "model": actual,
+                "verdict": verdict,
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "cost_usd": cost,
+                "attempts": attempts,
+            }
+        )
+    else:
+        ledger = usage_log.log_path()
 
     say(f"判定：{verdict}（judge {combined['verdict']}；模型原话 {answer}）")
     say(f"样例 {exemplar_count} 篇；基线指纹 {_short(set_obj.get('set_sha256'))}；模型 {actual}")
@@ -278,6 +320,10 @@ def run(
         f"（输入 {prompt_tokens} / 输出 {completion_tokens}）；"
         f"cost_usd {cost}（{cost_note}）"
     )
+    if attempts > 1:
+        say(f"这次模型调用了 {attempts} 次（第一次输出不能用，重试也算了 token）")
+    if ledger is not None:
+        say(f"用量已记到 {ledger}")
     say(f"理由：{judge.get('reason')}")
     cues = judge.get("cues") or []
     if cues:
@@ -302,6 +348,7 @@ def run(
                     "completion_tokens": completion_tokens,
                     "cost_usd": cost,
                     "cached": cached,
+                    "attempts": attempts,
                     "cost_note": cost_note,
                 },
                 ensure_ascii=False,

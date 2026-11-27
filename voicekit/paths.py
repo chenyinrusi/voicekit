@@ -50,6 +50,12 @@ def maybe_active_pack() -> Path | None:
     return _active_pack
 
 
+def reset_pack() -> None:
+    """松手：同一进程里换包、跑测试时清掉 `use_pack` 钉住的那个。"""
+    global _active_pack
+    _active_pack = None
+
+
 def resolve_pack(explicit: Path | str | None = None) -> Path:
     """返回作者包目录；找不到就抛 SystemExit，并列出找过的地方。"""
     if explicit:

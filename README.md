@@ -62,8 +62,13 @@ voicekit judge 我的稿子.md --pack voices/panchen-voice
 （相对路径按 cwd → 包目录 → 包目录往上三层找）。判定会打印 tokens 与 `cost_usd`；
 **它说像不等于作者肯签字**，放行仍由人拍板。
 判定缓存默认放 `~/.cache/voicekit/judge`，可用 `VOICEKIT_JUDGE_CACHE` 改；同一稿同一基线命中缓存不花钱。
+缓存只存判定结果（按提示词 sha256 命名），不存稿件正文；`--no-cache` 可强制重判。
+模型输出不能用时会自动再判一次，并打印 `[retry 1/1]`；重试也算 token，`--retries 0` 可关掉（默认 1）。
+真跑一次就追加一行用量到 `~/.cache/voicekit/usage.jsonl`，可用 `VOICEKIT_USAGE_LOG` 改路径（设空串 = 不记）。
+起稿也记同一本账；账本写不进去只警告，不影响结论。
 
 `draft` 退出码：`0` 写了 / `1` 事实有问题 / `2` 缺包、读不了、参数错。
+真跑完会打印 tokens 与 `cost_usd`，并记一行到同一本用量台账。
 `report`（含 `lint --html`）碰到读不了的文件也是 `rc=2`，不会漏成 `1`。
 `--dry-run` 会把能查的都查一遍（含模型与样例集是否匹配、稿子是否太短），所以预检绿了真跑就不会断。
 

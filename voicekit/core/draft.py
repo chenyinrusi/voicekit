@@ -31,6 +31,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 from .. import paths  # noqa: E402
+from .. import usage_log  # noqa: E402
 from . import judgments  # noqa: E402
 from . import rewrite  # noqa: E402
 from .rewrite_prompt import modern_voice_examples, style_digest  # noqa: E402
@@ -466,13 +467,44 @@ def _print_ending(kind: str) -> None:
         print("      ⚠ 你几乎从不这样收尾——要不要改成一句具体的动作或轻话")
 
 
+def _report_usage(call, material_path: Path, out_path: Path) -> None:
+    """真跑完把 tokens 与钱报出来，并记一行账：起稿也可能反复跑，账要看得见。"""
+    usage = dict(getattr(call, "usage", None) or {})
+    if not usage:
+        return
+    model = str(getattr(call, "model", "") or "")
+    prompt_tokens = int(usage.get("prompt_tokens") or 0)
+    completion_tokens = int(usage.get("completion_tokens") or 0)
+    cost = usage_log.cost_usd(model, usage)
+    print(
+        f"\n== 用量：tokens {prompt_tokens + completion_tokens}"
+        f"（输入 {prompt_tokens} / 输出 {completion_tokens}）；"
+        f"cost_usd {cost}（上限估算）=="
+    )
+    ledger = usage_log.record(
+        {
+            "command": "draft",
+            "file": str(material_path),
+            "out": str(out_path),
+            "model": model,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "cost_usd": cost,
+        }
+    )
+    if ledger is not None:
+        print(f"用量已记到 {ledger}")
+
+
 def main(argv: list[str] | None = None) -> int:
     for stream in (sys.stdout, sys.stderr):
         try:
             stream.reconfigure(encoding="utf-8", errors="replace")
         except (AttributeError, ValueError):
             pass
-    ap = argparse.ArgumentParser(description="按作者的路径起一篇初稿（判断/情绪分复用与推断）")
+    ap = argparse.ArgumentParser(
+        prog="voicekit draft", description="按作者的路径起一篇初稿（判断/情绪分复用与推断）"
+    )
     ap.add_argument("--material", "--file", dest="file", type=Path,
                     help="材料文件路径（.md/.txt，一行一条事实）；不是一段话")
     ap.add_argument("--pack", type=Path, help="作者包目录（默认找 ./voices/ 或 $VOICEKIT_PACK）")
@@ -553,6 +585,7 @@ def main(argv: list[str] | None = None) -> int:
             print("\n== 红：事实（机器定）==")
             for problem in result["problems"]:
                 print(f"  ✗ {problem}")
+        _report_usage(call, args.file, out_path)
         return 1 if result["problems"] else 0
     result = draft(material, call, args.examples, reuse)
     out_path = args.out or args.file.with_suffix(".draft.md")
@@ -632,6 +665,7 @@ def main(argv: list[str] | None = None) -> int:
             encoding="utf-8",
         )
     print(f"\n[OK] 起稿写到 {out_path}")
+    _report_usage(call, args.file, out_path)
     return 1 if result["problems"] else 0
 
 

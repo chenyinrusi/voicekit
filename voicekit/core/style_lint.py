@@ -487,7 +487,9 @@ def calibrate(profile_path: Path, corpus: Path) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     _utf8_stdio()
-    ap = argparse.ArgumentParser(description="score a draft against a writer-voice profile")
+    ap = argparse.ArgumentParser(
+        prog="voicekit lint", description="score a draft against a writer-voice profile"
+    )
     ap.add_argument("--file", type=Path, help="draft to score")
     ap.add_argument("--profile", type=Path, default=None)
     ap.add_argument("--corpus", type=Path, default=None)
@@ -591,6 +593,10 @@ def main(argv: list[str] | None = None) -> int:
         if not result["like"] and result["score"] >= pass_score(profile):
             print("-- 分数过线但核心轴合成偏差超上限：确定性层判不像")
         print("-- 确定性层只作诊断：放行只看 `judge.py` 的同人判定")
+        print(
+            f"-- rc {0 if result['like'] else 1} 是「像不像这个人」的结论，"
+            f"不是「{result['total']} 条全过」；未过的 {result['total'] - result['passed']} 条只作改稿线索"
+        )
     return 0 if result["like"] else 1
 
 
