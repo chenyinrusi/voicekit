@@ -375,10 +375,10 @@ def calibrate(profile_path: Path, corpus: Path) -> int:
     measured: dict[str, dict] = {}
     negative_scores: list[float] = []
     accepted_negatives = 0
-    for label, key, paths in groups:
+    for label, key, fixtures in groups:
         accepted = 0
         accepted_files: list[str] = []
-        for fixture in paths:
+        for fixture in fixtures:
             try:
                 body, _ = lib.clean_platform_noise(fixture.read_text(encoding="utf-8"))
                 result = compare(profile, resolve_values(profile, lib.measure(body)))
@@ -394,17 +394,17 @@ def calibrate(profile_path: Path, corpus: Path) -> int:
             if result["like"]:
                 accepted += 1
                 accepted_files.append(fixture.name)
-        if paths:
+        if fixtures:
             print(
-                f"== {label} 误放 {accepted}/{len(paths)}；"
-                f"95% 上界 {false_accept_upper_bound(accepted, len(paths)):.1%}"
+                f"== {label} 误放 {accepted}/{len(fixtures)}；"
+                f"95% 上界 {false_accept_upper_bound(accepted, len(fixtures)):.1%}"
             )
         measured[key] = {
-            "docs": len(paths),
-            "files": [path.name for path in paths],
+            "docs": len(fixtures),
+            "files": [path.name for path in fixtures],
             "accepted": accepted,
             "accepted_files": accepted_files,
-            "upper_bound_95": round(false_accept_upper_bound(accepted, len(paths)), 3),
+            "upper_bound_95": round(false_accept_upper_bound(accepted, len(fixtures)), 3),
         }
         accepted_negatives += accepted
     # 棘轮（FIX-345 合并）：与 build_profile 同一份判据——语料只许增，旧负样本不许由拒变收。
