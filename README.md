@@ -139,4 +139,6 @@ set VOICEKIT_TEST_PACK=voices/panchen-voice   # 让真包集成测试也跑
 
 ## 协议
 
-MIT，见 [LICENSE](LICENSE)。
+[PolyForm 非商业许可证 1.0.0](LICENSE)。个人学习、研究、非营利等非商业用途免费使用。**商业用途需要购买授权** —— 请联系作者（GitHub [@chenyinrusi](https://github.com/chenyinrusi)）。
+
+2026-11-28 之前发布的版本保留原许可证。

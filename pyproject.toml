@@ -8,13 +8,12 @@ version = "0.1.13"
 description = "提炼一个作者的文风，体检一篇稿子，按他的腔起稿（命令名 voicekit）"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = { text = "PolyForm Noncommercial License 1.0.0" }
 authors = [{ name = "voicekit contributors" }]
 keywords = ["writing", "style", "chinese", "prose", "lint", "llm"]
 classifiers = [
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
-  "License :: OSI Approved :: MIT License",
   "Natural Language :: Chinese (Simplified)",
   "Topic :: Text Processing :: Linguistic",
 ]
